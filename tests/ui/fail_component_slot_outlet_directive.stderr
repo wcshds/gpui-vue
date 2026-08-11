@@ -1,0 +1,5 @@
+error: v-show is not supported on <slot> because an outlet has no rendered host element
+  --> tests/ui/fail_component_slot_outlet_directive.rs:14:14
+   |
+14 |             <slot v-show={true} />
+   |              ^^^^

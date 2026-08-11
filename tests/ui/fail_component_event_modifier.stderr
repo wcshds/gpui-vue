@@ -1,0 +1,5 @@
+error: component event modifiers are not supported in this stage; remove `.stop`
+  --> tests/ui/fail_component_event_modifier.rs:21:30
+   |
+21 |     let _ = view! { <Emitter @change.stop={handler} /> };
+   |                              ^

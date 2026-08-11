@@ -1,0 +1,5 @@
+error: simultaneous `hover:` and `focus:` assignments to property `Display` cannot preserve Tailwind 4.3.2 cascade semantics: Tailwind lets `focus:` win, but GPUI 0.2.2 refines `hover:` last; use distinct properties or remove one of these state assignments
+ --> tests/ui/fail_tailwind_state_winner.rs:6:50
+  |
+6 |     let _ = view! { <div id="state-winner" class="focus:block hover:flex" /> };
+  |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^

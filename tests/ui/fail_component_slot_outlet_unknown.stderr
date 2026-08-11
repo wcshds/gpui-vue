@@ -1,0 +1,5 @@
+error: this component does not declare a `missing` slot
+  --> tests/ui/fail_component_slot_outlet_unknown.rs:14:19
+   |
+14 |             <slot name="missing" />
+   |                   ^^^^

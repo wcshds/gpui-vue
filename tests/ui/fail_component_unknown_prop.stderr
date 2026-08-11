@@ -1,0 +1,13 @@
+error[E0599]: no method named `unknown` found for struct `ChildPropsBuilder` in the current scope
+  --> tests/ui/fail_component_unknown_prop.rs:21:16
+   |
+ 5 | / component! {
+ 6 | |     /// Component used to exercise Rust's unknown-setter diagnostic.
+ 7 | |     component Child {
+ 8 | |         props {
+...  |
+17 | | }
+   | |_- method `unknown` not found for this struct
+...
+21 |           <Child unknown={41} />
+   |                  ^^^^^^^ method not found in `ChildPropsBuilder`

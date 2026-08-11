@@ -1,0 +1,5 @@
+error: component prop `self` does not normalize to a legal Rust identifier
+ --> tests/ui/fail_component_prop_special_keyword.rs:6:28
+  |
+6 |     let _ = view! { <Child self={1_usize} /> };
+  |                            ^^^^

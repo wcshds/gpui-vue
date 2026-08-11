@@ -1,0 +1,11 @@
+error[E0599]: no method named `__gpui_vue_dispatch_missing` found for reference `&EmitterEvent` in the current scope
+  --> tests/ui/fail_component_event_unknown.rs:21:18
+   |
+21 |         <Emitter @missing={
+   |                  ^
+   |
+help: there is a method `__gpui_vue_dispatch_change` with a similar name
+   |
+21 -         <Emitter @missing={
+21 +         <Emitter __gpui_vue_dispatch_changemissing={
+   |

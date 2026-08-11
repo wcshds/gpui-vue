@@ -1,0 +1,5 @@
+error: <slot> is available only in direct component markup; use `template(this, window, cx) { <slot /> }` or invoke a typed slot explicitly
+ --> tests/ui/fail_slot_outlet.rs:6:22
+  |
+6 |     let _ = view! { <slot /> };
+  |                      ^^^^

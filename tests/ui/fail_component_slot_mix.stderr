@@ -1,0 +1,5 @@
+error: `:slots={...}` cannot be mixed with component children or named slot templates
+ --> tests/ui/fail_component_slot_mix.rs:7:10
+  |
+7 |         <Child :props={()} :slots={()}>
+  |          ^^^^^

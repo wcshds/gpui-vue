@@ -1,0 +1,5 @@
+error: unmounted hook binders must have distinct names
+ --> tests/ui/fail_lifecycle_binders.rs:8:25
+  |
+8 |         unmounted(this, this) {}
+  |                         ^^^^

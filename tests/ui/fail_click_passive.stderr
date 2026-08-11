@@ -1,0 +1,5 @@
+error: .passive configures DOM listeners and has no GPUI equivalent
+ --> tests/ui/fail_click_passive.rs:7:27
+  |
+7 |         <button id="save" @click.passive={|_, _, _| {}}>"Save"</button>
+  |                           ^

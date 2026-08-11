@@ -1,0 +1,22 @@
+error[E0599]: no method named `build` found for struct `RequiredBuilderPropsBuilder<PropMissing>` in the current scope
+  --> tests/ui/fail_missing_required_prop.rs:20:45
+   |
+ 5 | / component! {
+ 6 | |     /// Compile-fail fixture with one required property.
+ 7 | |     component RequiredBuilder {
+ 8 | |         props {
+...  |
+17 | | }
+   | |_- method `build` not found for this struct
+...
+20 |       let _ = RequiredBuilderProps::builder().build();
+   |                                               ^^^^^ method not found in `RequiredBuilderPropsBuilder<PropMissing>`
+   |
+   = note: the method was found for `RequiredBuilderPropsBuilder<PropSet>`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following traits define an item `build`, perhaps you need to implement one of them:
+           candidate #1: `bitstream_io::write::BitWrite`
+           candidate #2: `bitstream_io::write::BitWrite2`
+           candidate #3: `bitstream_io::write::ByteWrite`
+           candidate #4: `gpui_vue::gpui::Action`
+           candidate #5: `lyon_path::builder::Build`

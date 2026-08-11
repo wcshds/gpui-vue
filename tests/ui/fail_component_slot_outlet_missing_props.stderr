@@ -1,0 +1,5 @@
+error: slot `actions` has non-unit props and requires `:props={...}`
+  --> tests/ui/fail_component_slot_outlet_missing_props.rs:20:19
+   |
+20 |             <slot name="actions" />
+   |                   ^^^^

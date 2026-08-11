@@ -1,0 +1,5 @@
+error: duplicate props section
+ --> tests/ui/fail_duplicate_component_section.rs:9:9
+  |
+9 |         props {}
+  |         ^^^^^

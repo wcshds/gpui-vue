@@ -1,0 +1,20 @@
+error[E0308]: mismatched types
+  --> tests/ui/fail_component_slot_outlet_raw_wrong_props.rs:8:1
+   |
+ 8 | / component! {
+ 9 | |     /// Component combining raw-keyword property and slot declarations.
+10 | |     component RawOutletProps {
+11 | |         props {
+...  |
+22 | |             <slot name="type" :props={()} />
+   | |                               - arguments to this method are incorrect
+...  |
+25 | | }
+   | |_^ expected `RawSlotProps`, found `()`
+   |
+note: method defined here
+  --> src/slot.rs
+   |
+   |     pub fn render(&self, props: Props, window: &mut Window, cx: &mut App) -> Option<SlotContent> {
+   |            ^^^^^^
+   = note: this error originates in the macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)

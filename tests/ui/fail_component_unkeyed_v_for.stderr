@@ -1,0 +1,5 @@
+error: every v-for root requires a dynamic `:key={...}` to namespace GPUI element state
+ --> tests/ui/fail_component_unkeyed_v_for.rs:8:14
+  |
+8 |             <Child v-for={item in 0..3} :props={()} />
+  |              ^^^^^

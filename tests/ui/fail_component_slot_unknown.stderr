@@ -1,0 +1,18 @@
+error[E0599]: no method named `with_missing` found for struct `ChildSlots` in the current scope
+  --> tests/ui/fail_component_slot_unknown.rs:22:23
+   |
+ 5 | / component! {
+ 6 | |     /// Component exposing only its default slot.
+ 7 | |     component Child {
+ 8 | |         slots {
+...  |
+17 | | }
+   | |_- method `with_missing` not found for this struct
+...
+20 |       let _ = view! {
+   |  _____________-
+21 | |         <Child>
+22 | |             <template #missing><text>"unknown"</text></template>
+   | |                      -^ method not found in `ChildSlots`
+   | |______________________|
+   |

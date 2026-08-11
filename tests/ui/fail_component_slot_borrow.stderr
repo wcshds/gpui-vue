@@ -1,0 +1,18 @@
+error[E0521]: borrowed data escapes outside of function
+  --> tests/ui/fail_component_slot_borrow.rs:21:5
+   |
+20 |   fn borrowed_provider(borrowed: &str) -> impl IntoElement + '_ {
+   |                        --------  - let's call the lifetime of this reference `'1`
+   |                        |
+   |                        `borrowed` is a reference that is only valid in the function body
+21 | /     view! {
+22 | |         <Child>
+23 | |             <text>{borrowed.to_owned()}</text>
+24 | |         </Child>
+25 | |     }
+   | |     ^
+   | |     |
+   | |_____`borrowed` escapes the function body here
+   |       argument requires that `'1` must outlive `'static`
+   |
+   = note: this error originates in the macro `view` (in Nightly builds, run with -Z macro-backtrace for more info)

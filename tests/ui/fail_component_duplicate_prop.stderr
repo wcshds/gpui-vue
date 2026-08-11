@@ -1,0 +1,5 @@
+error: duplicate component prop `display_name`
+  --> tests/ui/fail_component_duplicate_prop.rs:21:37
+   |
+21 |         <Child display-name="first" display_name="second" />
+   |                                     ^^^^^^^^^^^^

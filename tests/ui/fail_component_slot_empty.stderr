@@ -1,0 +1,5 @@
+error: a named slot provider must contain at least one child node
+ --> tests/ui/fail_component_slot_empty.rs:8:14
+  |
+8 |             <template #actions />
+  |              ^^^^^^^^

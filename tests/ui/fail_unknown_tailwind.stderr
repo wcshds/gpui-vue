@@ -1,0 +1,5 @@
+error: unknown gpui-vue Tailwind utility `definitely-not-a-tailwind-utility`
+ --> tests/ui/fail_unknown_tailwind.rs:6:32
+  |
+6 |     let _ = view! { <div class="definitely-not-a-tailwind-utility" /> };
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

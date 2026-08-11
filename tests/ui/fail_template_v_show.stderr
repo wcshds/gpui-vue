@@ -1,0 +1,5 @@
+error: v-show cannot be used on <template> because it has no rendered host element
+ --> tests/ui/fail_template_v_show.rs:9:14
+  |
+9 |             <template v-show={visible}>"hidden"</template>
+  |              ^^^^^^^^

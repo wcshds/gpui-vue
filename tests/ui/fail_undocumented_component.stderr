@@ -1,0 +1,5 @@
+error: every component declaration requires a `///` documentation comment
+ --> tests/ui/fail_undocumented_component.rs:6:19
+  |
+6 |     pub component Undocumented {
+  |                   ^^^^^^^^^^^^

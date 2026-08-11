@@ -1,0 +1,5 @@
+error: `build` is reserved for the generated props builder terminal method
+  --> tests/ui/fail_prop_named_build.rs:10:13
+   |
+10 |             build: usize,
+   |             ^^^^^

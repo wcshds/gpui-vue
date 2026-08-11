@@ -1,0 +1,5 @@
+error: dynamic slot outlet names are not supported because slots have heterogeneous Rust props types
+  --> tests/ui/fail_component_slot_outlet_dynamic_name.rs:14:19
+   |
+14 |             <slot :name={"default"} />
+   |                   ^

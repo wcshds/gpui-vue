@@ -1,0 +1,5 @@
+error: `group` and `group-active:` cannot target the same element: GPUI 0.2.2 captures the element's own group hitbox before its active mouse handler, while Tailwind `group-active:` selects descendants of the active group rather than the group element itself
+ --> tests/ui/fail_tailwind_group_active_self.rs:6:49
+  |
+6 |     let _ = view! { <div id="self-active" class="group group-active:block" /> };
+  |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^

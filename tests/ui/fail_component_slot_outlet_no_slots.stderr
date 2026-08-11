@@ -1,0 +1,5 @@
+error: this component does not declare any slots
+ --> tests/ui/fail_component_slot_outlet_no_slots.rs:9:14
+  |
+9 |             <slot />
+  |              ^^^^

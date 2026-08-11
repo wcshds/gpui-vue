@@ -1,0 +1,5 @@
+error: `:props={...}` cannot be mixed with individual component props
+  --> tests/ui/fail_component_mixed_props.rs:22:31
+   |
+22 |         <Child :props={props} label={"individual".to_owned()} />
+   |                               ^^^^^

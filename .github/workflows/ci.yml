@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# CI only needs to read the checked-out repository.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Rust quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Keep every gate on the stable compiler and install only the required tools.
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test the platform-neutral workspace
+        run: cargo test --locked --workspace --all-targets --no-default-features
+
+      - name: Lint the platform-neutral workspace
+        run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+
+      # Desktop code is type-checked but never linked on the CI runner.
+      - name: Check desktop support
+        run: cargo check --locked --workspace --all-targets --no-default-features --features desktop
+
+      - name: Lint desktop support
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features desktop -- -D warnings
+
+      - name: Reject rustdoc warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --no-deps --no-default-features

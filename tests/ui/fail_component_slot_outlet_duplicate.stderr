@@ -1,0 +1,5 @@
+error: slot `default` has more than one outlet in this component template; the current zero-wrapper outlet lane cannot assign distinct GPUI identity to repeated provider content
+  --> tests/ui/fail_component_slot_outlet_duplicate.rs:16:18
+   |
+16 |                 <slot />
+   |                  ^^^^

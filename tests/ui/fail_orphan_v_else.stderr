@@ -1,0 +1,5 @@
+error: v-else-if and v-else must immediately follow a v-if or v-else-if sibling
+ --> tests/ui/fail_orphan_v_else.rs:8:14
+  |
+8 |             <span v-else>"orphan"</span>
+  |              ^^^^

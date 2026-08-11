@@ -1,0 +1,5 @@
+error: duplicate mounted section
+ --> tests/ui/fail_duplicate_lifecycle.rs:9:9
+  |
+9 |         mounted(_this, _window, _cx) {}
+  |         ^^^^^^^

@@ -1,0 +1,32 @@
+error[E0277]: the trait bound `NoSlotsChild: NativeComponentSlots` is not satisfied
+  --> tests/ui/fail_component_children.rs:16:10
+   |
+16 |         <NoSlotsChild><text>"inline child"</text></NoSlotsChild>
+   |          ^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `NativeComponentSlots` is not implemented for `NoSlotsChild`
+  --> tests/ui/fail_component_children.rs:5:1
+   |
+ 5 | / component! {
+ 6 | |     /// Component intentionally declaring no slots.
+ 7 | |     component NoSlotsChild {
+   | |__________________________^
+   = note: this error originates in the macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `NoSlotsChild: NativeComponentSlots` is not satisfied
+  --> tests/ui/fail_component_children.rs:15:13
+   |
+15 |       let _ = view! {
+   |  _____________^
+16 | |         <NoSlotsChild><text>"inline child"</text></NoSlotsChild>
+17 | |     };
+   | |_____^ unsatisfied trait bound
+   |
+help: the trait `NativeComponentSlots` is not implemented for `NoSlotsChild`
+  --> tests/ui/fail_component_children.rs:5:1
+   |
+ 5 | / component! {
+ 6 | |     /// Component intentionally declaring no slots.
+ 7 | |     component NoSlotsChild {
+   | |__________________________^
+   = note: this error originates in the macro `view` which comes from the expansion of the macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)

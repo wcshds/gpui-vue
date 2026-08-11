@@ -1,0 +1,5 @@
+error: duplicate component event `value_change`
+  --> tests/ui/fail_component_event_duplicate.rs:23:40
+   |
+23 |         <Emitter @value-change={first} on:value_change={second} />
+   |                                        ^^

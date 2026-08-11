@@ -1,0 +1,5 @@
+error: duplicate component slot `actions`
+ --> tests/ui/fail_component_slot_duplicate.rs:9:23
+  |
+9 |             <template #actions><text>"second"</text></template>
+  |                       ^

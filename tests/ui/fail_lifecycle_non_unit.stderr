@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_lifecycle_non_unit.rs:9:13
+  |
+9 |             7usize
+  |             ^^^^^^ expected `()`, found `usize`
