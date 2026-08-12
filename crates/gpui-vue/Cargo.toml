@@ -1,0 +1,25 @@
+[package]
+name = "gpui-vue"
+version.workspace = true
+edition.workspace = true
+description = "A Vue-inspired, compile-time view DSL for GPUI"
+license.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+desktop = ["gpui/font-kit", "gpui/wayland", "gpui/x11"]
+
+[dependencies]
+gpui.workspace = true
+gpui-vue-macros.workspace = true
+
+[[example]]
+name = "counter"
+required-features = ["desktop"]
+
+[dev-dependencies]
+trybuild.workspace = true

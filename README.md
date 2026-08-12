@@ -14,6 +14,10 @@ It currently provides:
 
 There is no JavaScript engine, DOM facade, VDOM, runtime class parser, FFI mutation queue, or second rendering tree.
 
+The repository is a Cargo workspace: `crates/gpui-vue` contains the runtime,
+examples, and integration tests, while `crates/gpui-vue-macros` contains the
+procedural macros.
+
 ## Counter
 
 ```rust,ignore
@@ -362,7 +366,7 @@ let value = doubled.get_or_update(count.revision(), || count.get() * 2);
 
 The selected design borrows the compile-away idea but targets GPUI builders directly. If exact, unmodified Vue SFC execution later becomes mandatory, it belongs in a separate optional QuickJS compatibility backend with explicit startup, memory, and maintenance costs.
 
-See the [architecture decision](docs/architecture.md), detailed [capability matrix](docs/capability-matrix.md), and [counter example](examples/counter.rs).
+See the [architecture decision](docs/architecture.md), detailed [capability matrix](docs/capability-matrix.md), and [counter example](crates/gpui-vue/examples/counter.rs).
 
 ## Quality gates
 

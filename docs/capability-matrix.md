@@ -18,8 +18,9 @@ The status labels have deliberately narrow meanings:
 - **Not targeted** — intentionally excluded from the native hot path.
 
 The source of truth for an **Implemented** or **Partial** label is the code in
-`gpui-vue-macros/src`, `src/component.rs`, `src/slot.rs`, `src/local.rs`,
-`src/reactivity.rs`, and the repository tests. When code and this document
+`crates/gpui-vue-macros/src`, `crates/gpui-vue/src/component.rs`,
+`crates/gpui-vue/src/slot.rs`, `crates/gpui-vue/src/local.rs`,
+`crates/gpui-vue/src/reactivity.rs`, and the repository tests. When code and this document
 disagree, the code wins and this matrix must be corrected.
 
 ## Decision summary
