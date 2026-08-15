@@ -2,9 +2,9 @@
 
 這一區記錄設計約束、精確能力邊界與實作決策。它不是入門閱讀順序；第一次使用 gpui-vue，請先從 [介紹](/guide/introduction) 和 [快速開始](/guide/quick-start) 開始。
 
-## 架構決策
+## 架構
 
-[閱讀架構決策](/architecture)
+[閱讀架構](/architecture)
 
 說明為什麼模板直接編譯到 GPUI builders、為什麼不嵌入 JavaScript runtime / VDOM，以及 component host、slots、events、lifecycle 與 typed utility cascade 如何維持單一原生 UI tree。
 
@@ -16,7 +16,7 @@
 
 - **Implemented**：目前 source 中存在，且有測試或完整範例覆蓋；
 - **Partial**：可用子集已實現，同一列會寫明缺口；
-- **Next**：適合原生設計，但尚未實現；
+- **Not implemented**：目前尚未實現；
 - **Host-different**：可以有原生類比，但不能宣稱 DOM / CSS 等價；
 - **Not targeted**：刻意不放入原生 hot path。
 

@@ -1,8 +1,10 @@
-# Architecture decision: a Vue-inspired compile-time frontend for GPUI
+# Architecture
 
-## Decision
+## Overview
 
-Use PocketJS and Vue Vapor as compiler-design references, but implement the default path as a Rust proc-macro frontend that emits ordinary GPUI element builders. Do not embed PocketJS's engine or a JavaScript runtime in the GPUI render path.
+`gpui-vue` takes compiler-design cues from PocketJS and Vue Vapor. Its default
+path is a Rust proc-macro frontend that emits ordinary GPUI element builders.
+The render path does not embed PocketJS's engine or a JavaScript runtime.
 
 ```text
 view! / component! + enumerable classes
@@ -322,14 +324,6 @@ avoiding a dynamic property map, trait object, or per-field heap allocation.
 15. A declared slot may be invoked through the typed Rust API or one direct `<slot>` outlet. Static outlet names and scoped props are type checked; unit props may be omitted, non-unit props are required, and fallback is lazy. A second outlet for the same declared slot is conservatively rejected even across conditional branches. Providers yield one `SlotContent` / `AnyElement`; multiple roots receive a synthetic `div`.
 16. A simple PascalCase identifier selects the component lane. Tags choose either a complete `:props={...}` value or individual attributes lowered through the generated typestate builder. They accept optional `:slots={...}`, or a non-self-closing body whose ordinary children provide `default` and whose direct `<template #name={pattern}>` children provide named slots; these modes cannot be mixed. `key` / `:key`, typed `@event` / `on:event` listeners, conditional chains, and keyed `v-for` are supported. Ordinary classes/IDs, `v-show`, and component-event modifiers remain rejected rather than introducing a semantic host wrapper.
 
-## Evolution path
-
-1. Grow the remaining typed intrinsic/component surface beyond the implemented keyboard, pointer, drag/drop, focus, wheel/pinch, and controlled `TextModelBinding` host surface, including `v-model` template lowering and a custom-component model convention, broader keyboard semantics, accessibility, and the documented class matrix.
-2. Extend the persistent PascalCase host beyond the current typed prop/slot/event/lifecycle surface with carefully specified native event conveniences, provide/inject, and broader accessibility behavior while keeping `Render`/`Entity` as the ownership boundary.
-3. Grow the explicit `Memo<T, D>` cache into dependency-aware computed/watch conveniences where entity subscriptions and GPUI's executor provide the correct ownership and disposal semantics.
-4. If desired, add a `.vue`-like file frontend that emits the same internal template representation/Rust code. Keep it independent of the runtime.
-5. Only if unmodified Vue TypeScript/SFC execution is a hard requirement, prototype a feature-gated compatibility crate with a pinned Vue version and differential tests.
-
 ## Version boundary
 
 The implementation pins a fixed, API-compatible GPUI-CE commit. GPUI remains
@@ -338,6 +332,6 @@ match this host revision. Upgrades should be explicit and should run macro
 expansion, reactivity, bridge-contract, counter/KAGE Editor desktop, and visual
 interaction tests.
 
-Implemented, planned, and host-incompatible behaviors are tracked separately in
-the [capability matrix](capability-matrix.md). A planned row there must not be
-described as supported until the corresponding implementation and tests land.
+Implemented, unimplemented, and host-incompatible behaviors are tracked
+separately in the [capability matrix](capability-matrix.md). An unimplemented
+row is not part of the supported API until its implementation and tests exist.

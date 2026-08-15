@@ -2,6 +2,11 @@
 
 `gpui-vue` is a Vue-inspired, compile-time authoring layer for [GPUI](https://crates.io/crates/gpui). It borrows Vapor's compile-away direction while preserving GPUI's native entity, element, layout, input, text, and GPU renderer.
 
+> **Development note:** Most of this repository, including its implementation,
+> tests, and documentation, was produced with substantial assistance from AI
+> coding tools. The source, tests, and documented quality gates remain the
+> authoritative basis for evaluating the project.
+
 It currently provides:
 
 - a compile-time `view!` template;
