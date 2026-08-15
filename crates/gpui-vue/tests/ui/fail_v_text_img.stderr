@@ -1,0 +1,5 @@
+error: v-text requires a parent intrinsic and cannot be used on <img>
+ --> tests/ui/fail_v_text_img.rs:7:41
+  |
+7 |     let _ = view! { <img src="icon.png" v-text={label} /> };
+  |                                         ^

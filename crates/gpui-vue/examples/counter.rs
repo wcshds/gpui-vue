@@ -1,8 +1,9 @@
 //! Desktop counter demonstrating the native GPUI template expansion.
 
-use gpui_vue::gpui::{App, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_vue::desktop::{DesktopApp, WindowConfig};
 use gpui_vue::prelude::*;
 
+// #region counter_component
 component! {
     /// Mutable state and direct markup retained by the counter's GPUI entity.
     component Counter {
@@ -61,19 +62,12 @@ component! {
         }
     }
 }
+// #endregion counter_component
 
+// #region counter_main
 /// Opens the native desktop window and mounts the counter entity.
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(720.0), px(520.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| Counter::new(CounterProps::new(), cx),
-        )
-        .expect("failed to open the counter window");
-        cx.activate(true);
-    });
+    DesktopApp::new(WindowConfig::new("gpui-vue Counter", 720.0, 520.0))
+        .run_component(|_, cx| Counter::new(CounterProps::new(), cx));
 }
+// #endregion counter_main

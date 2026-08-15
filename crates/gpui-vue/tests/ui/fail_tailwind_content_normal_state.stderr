@@ -1,0 +1,5 @@
+error: `hover:content-normal` cannot be lowered in an interaction state: GPUI `content_normal()` clears the ordinary `align_content` refinement, but `None` inside a state refinement cannot reset an already-resolved base value; use `content-normal` only without a variant
+ --> tests/ui/fail_tailwind_content_normal_state.rs:6:32
+  |
+6 |     let _ = view! { <div class="hover:content-normal" /> };
+  |                                ^^^^^^^^^^^^^^^^^^^^^^

@@ -9,7 +9,8 @@ view! / component! + enumerable classes
                    │ compile time
                    ▼
           native GPUI builders ◄──── Ref<T> / Local<T> + Context::notify()
-                   │
+                   ▲
+                   │ curated native modules and desktop bootstrap
                    ▼
       GPUI Element / Taffy layout / text / input
                    │
@@ -17,7 +18,14 @@ view! / component! + enumerable classes
              GPUI GPU renderer
 ```
 
-The proc macro is the compiler boundary. `crates/gpui-vue-macros/src/view.rs` owns template parsing, direct component-markup/slot-outlet lowering, and structural/component-host code generation; `tailwind.rs` validates candidates and resolves a typed property cascade; `tailwind_palette.rs` holds the pre-lowered Tailwind 4.3.2 default palette; `component.rs` emits ordinary Rust props/input/component/event/slot items, `AppContext` entity constructors, direct-markup `Render` implementations, and statically dispatched lifecycle hooks. Runtime `crates/gpui-vue/src/component.rs` retains keyed component entities in GPUI element state and transparently delegates them through `HostedEntity`; `crates/gpui-vue/src/slot.rs` supplies the typed lazy `Slot<P>` / `SlotContent` render boundary. `crates/gpui-vue/src/reactivity.rs` contains shared reactive handles, while `crates/gpui-vue/src/local.rs` contains inline local state, revision tokens, and explicit typed memo caches. GPUI remains the only host tree and renderer.
+The proc macro is the compiler boundary. `crates/gpui-vue-macros/src/view.rs` owns template parsing, direct component-markup/slot-outlet lowering, and structural/component-host code generation; `tailwind.rs` validates candidates and resolves a typed property cascade; `tailwind_palette.rs` holds the pre-lowered Tailwind 4.3.2 default palette; `component.rs` emits ordinary Rust props/input/component/event/slot items, `AppContext` entity constructors, direct-markup `Render` implementations, and statically dispatched lifecycle hooks. Runtime `crates/gpui-vue/src/component.rs` retains keyed component entities in GPUI element state and transparently delegates them through `HostedEntity`; `crates/gpui-vue/src/slot.rs` supplies the typed lazy `Slot<P>` / `SlotContent` render boundary. `crates/gpui-vue/src/reactivity.rs` contains shared reactive handles, while `crates/gpui-vue/src/local.rs` contains inline local state, revision tokens, and explicit typed memo caches. The application-facing native surface is split by responsibility: `ui`, `paint`, `media`, and `virtual_list` expose typed visual primitives; `overlay` and `animation` expose retained presentation seams; `state` exposes application globals; `effects` and `async_state` expose GPUI-owned observation, task, and resource lifetimes; `http` and `assets` cover transport and embedded resources; and feature-gated `desktop` owns application and multi-window bootstrap. These are thin typed modules over the same runtime. GPUI remains the only host tree and renderer.
+
+KAGE Editor validates this boundary in a complete application: `component!`
+retains editor state, `view!` authors every ordinary panel, modal, list, image,
+canvas input host, and shared control, `paint` owns precision vector drawing,
+`http` owns GlyphWiki transport, and `desktop` owns launch. The package neither
+depends on nor imports GPUI directly. On macOS the canvas handles native trackpad pinch input and
+updates pan with zoom so the gesture position remains anchored.
 
 ## Alternatives considered
 
@@ -45,21 +53,70 @@ It does **not** currently mean per-text-node reactive effects or hoisted retaine
 
 Every supported class becomes one or more typed property declarations before GPUI code is quoted. `place-content-*` is therefore not emitted as one broad builder call: it writes independent `AlignContent` and `JustifyContent` slots. Representable `items-*`, `content-*`, `justify-*`, and `self-*` values assign GPUI's public enums directly, including the flex-relative `FlexStart`/`FlexEnd` distinction that GPUI's `justify_start`/`justify_end` helpers do not preserve. Tailwind 4.3.2 candidate order and trailing `!` choose a winner per slot, so a longhand can replace only its half of `place-content-*` regardless of class-token order. These start/end values are exact GPUI/Taffy enum mappings for the exposed axes; they do not add browser writing-mode or direction resolution.
 
-Each state owns a resolved cascade, but GPUI's runtime refinement order is fixed: `in-focus`, `focus`, `group-hover`, `hover`, `group-active`, then `active`. Tailwind 4.3.2's effective low-to-high precedence for the supported set is `in-focus`, `group-hover`, `group-active`, `hover`, `focus`, then `active`; `in-focus` stays lowest because its ancestor condition is under `:where(...)`. After regular important declarations suppress ordinary state fields, the compiler compares every remaining shared-property pair using Tailwind importance/precedence and GPUI's host order. It emits the pair only when both select the same winner and otherwise reports both variants and the property at the class literal. This permits independent fields and aligned state pairs without pretending that GPUI callbacks carry CSS importance.
+Each state owns a resolved cascade, but GPUI's runtime refinement order is fixed: `in-focus`, `focus`, `focus-visible`, `group-hover`, `hover`, `group-active`, then `active`. Tailwind 4.3.2's effective low-to-high precedence for the supported set is `in-focus`, `group-hover`, `group-active`, `hover`, `focus`, `focus-visible`, then `active`; `in-focus` stays lowest because its ancestor condition is under `:where(...)`. `focus-visible:` lowers through GPUI's exact-focus and keyboard-modality predicate, requires stable identity, and makes the host focusable. After regular important declarations suppress ordinary state fields, the compiler compares every remaining shared-property pair using Tailwind importance/precedence and GPUI's host order. It emits the pair only when both select the same winner and otherwise reports both variants and the property at the class literal. This permits independent fields and aligned state pairs without pretending that GPUI callbacks carry CSS importance.
 
 The `group` marker plus `group-hover:` and `group-active:` lower to GPUI's native named-group APIs. GPUI paints same-name group hitboxes as a stack and resolves the last entry, so nested unqualified groups target the nearest group; Tailwind selectors can instead match any unqualified group ancestor. `group group-active:*` on the same element is rejected when any resolved group-active field survives regular importance: the group hitbox is pushed before that element registers its active mouse handler, allowing GPUI to capture itself, while Tailwind's selector requires a descendant. If regular important declarations suppress every group-active field, no visual self-match can occur and the spelling remains accepted. Group-hover style computation occurs before the element pushes its own group hitbox, so the analogous same-element spelling cannot self-match and stays supported. Tailwind's hover and group-hover output is additionally gated by `@media (hover: hover)` in a browser; GPUI hitbox hover has no hover-capability media-query layer.
 
 `in-focus:` lowers to GPUI's native `in_focus` refinement. Its `within_focused` relation contains the focused ID itself as well as descendants, whereas Tailwind's implicit-ancestor form normally excludes self. The inverse `focus-within:` relation would require styling a target whose self or descendant is focused; GPUI 0.2.2 exposes no fluent `contains_focused` style callback, so that spelling is rejected explicitly.
 
-Scroll is a separate post-identity lane. Hidden overflow remains an ordinary `Styled` refinement, but static `overflow-scroll`, `overflow-x-scroll`, and `overflow-y-scroll` resolve per axis to `StatefulInteractiveElement` methods. The final resolved cascade participates in stable-ID validation; regular style calls are emitted first, `.id(...)` changes the builder type, and only then are retained scroll methods and interaction callbacks appended. This is GPUI retained clipping and wheel scrolling; it does not synthesize browser UA scrollbar chrome or promise browser touch, keyboard, and accessibility behavior. Scroll under a state variant is rejected because a `StyleRefinement` callback cannot introduce retained scroll state. Alignment resets/inheritance, safe or last-baseline alignment, `order-*`, overflow auto/clip/visible, and display modes without an exact GPUI host value likewise fail at macro expansion rather than using an approximate substitution.
+Scroll is a separate post-identity lane. Hidden, clip, and visible overflow are ordinary non-retained `Styled` refinements, including the `overflow-x-*` and `overflow-y-*` forms, and may appear under supported interaction variants. Static `overflow-scroll`, `overflow-x-scroll`, and `overflow-y-scroll` instead resolve per axis to `StatefulInteractiveElement` methods. The final resolved cascade participates in stable-ID validation; regular style calls are emitted first, `.id(...)` changes the builder type, and only then are retained scroll methods and interaction callbacks appended. This is GPUI retained clipping and wheel scrolling; it does not synthesize browser UA scrollbar chrome or promise browser touch, keyboard, and accessibility behavior. The retained overflow utilities and an `@scroll-wheel` listener are independent: one opts into retained clipping/scroll state, while the other receives native wheel input. Scroll under a state variant is rejected because a `StyleRefinement` callback cannot introduce retained scroll state. Static `content-normal` is the one native alignment reset and lowers to `Styled::content_normal()`; state-prefixed `content-normal`, other alignment resets/inheritance, safe or last-baseline alignment, `order-*`, `overflow-auto`, and display modes without an exact GPUI host value fail at macro expansion rather than using an approximate substitution.
+
+## Intrinsic host bindings
+
+Intrinsic host bindings use one fixed typed builder order: regular styles,
+identity, tracked focus, tab/focus setup, key context, retained/state callbacks,
+then source-ordered interactions/content. Every host listener, drag/drop binding,
+`:track-focus`, and static or dynamic key context participates in stable-ID
+validation. `@key-down`, `@key-up`, and `@modifiers-changed` make their host
+focusable and enter GPUI's focused dispatch path. Mouse down/down-out/up/up-out
+require exactly one `.left`, `.right`, or `.middle` selector and lower to
+GPUI's corresponding button-filtered listener; mouse-move, drag-move, pinch,
+scroll-wheel, hover, drop, focus, and blur have no modifier lane. `@hover`
+receives native entry/exit state. `@focus` and `@blur` require
+`:track-focus={&focus_handle}` and observe acquisition or loss of that exact
+handle rather than descendant focus changes.
+
+A drag source pairs one `:drag-payload` with one `:drag-preview`. A target may
+install one type-erased `:can-drop` predicate plus repeated, exact-payload-type
+`:drag-over`, `@drag-move`, and `@drop` lanes. Payload, preview, predicate,
+style, and listener expressions are evaluated once in attribute source order;
+GPUI selects typed lanes by the payload's `TypeId`. This is an in-process native
+contract, not browser `DataTransfer` or MIME negotiation. `@pinch` / `on:pinch`
+lowers to native `PinchEvent` handling on macOS and Wayland. Windows precision
+trackpads use the platform Ctrl-wheel path instead, so applications keep an
+`@scroll-wheel` handler for that behavior. Click alone retains the existing
+source-ordered `.stop`, `.prevent`, system-key, and `.exact` wrapper. The
+`@event` and `on:event` forms share canonical duplicate diagnostics; only
+`@drag-move` and `@drop` are repeatable because GPUI retains independent typed
+lanes for them.
+
+The `<img>` intrinsic has one separate, non-retained media construction lane.
+Its required `src` plus optional typed `:object-fit={ObjectFit}`,
+`:loading={Fn() -> AnyElement}`, and `:fallback={Fn() -> AnyElement}` values
+are first bound to hygienic locals in attribute source order, exactly once per
+render. The completed locals then feed the pinned GPUI `StyledImage` builder;
+the loading/fallback function bodies remain lazy and execute only when GPUI
+selects a replacement. Those APIs carry no element-state requirement, so these
+bindings do not invent a stable-ID rule. CSS/DOM object-fit and loading strings
+are rejected instead of being parsed at runtime.
+
+`v-text={expression}` joins that final ordered lane on a parent intrinsic. The
+expression is evaluated once into a local and then passed to typed GPUI
+`.child(local)`; no HTML string, escaping, or parser semantics are introduced.
+Because it owns the one child-content lane, any authored body child is a compile
+error, as are `img`, structural `template`, slot, and PascalCase targets. The
+fixed native builder stages above still precede this lane, so the compiler does
+not claim browser-like evaluation order across style/identity expressions and
+`v-text`.
 
 ## Direct component template frontend
 
 `component!` accepts `template(this, window, cx) { <direct markup> }` and lowers
 that markup through the same typed template compiler as `view!`, with exact
 component render bindings and declared-slot metadata. The earlier Rust-body form
-remains compatible: it may return any `IntoElement` directly or invoke `view!`
-explicitly. The direct form removes one layer of punctuation and enables
+remains compatible: it may return any `IntoElement` directly—including values
+from the curated `ui` and `paint` bridges—or invoke `view!` explicitly. The
+direct form removes one layer of punctuation and enables
 contextual slot providers; it does not parse a `.vue` file, JavaScript
 expressions, `<script setup>`, or a Vue runtime. All expressions and scoped-slot
 patterns remain Rust and are checked by rustc.
@@ -250,9 +307,9 @@ avoiding a dynamic property map, trait object, or per-field heap allocation.
 
 1. A single unconditional intrinsic root lowers directly. Multiple roots, an explicit root fragment, a structural root, or a conditional root receive one synthetic `div` because GPUI 0.2.2 requires one `IntoElement` and has no wrapper-free `display: contents` host. Nested fragments and structural `<template>` children flatten into their parent.
 2. `class` must be a literal. `:class` accepts a literal or nested Rust `if` tree whose leaves are literals; runtime class strings, arrays, and maps are rejected. A coexisting static class is prepended to each leaf before cascade resolution (and is the omitted-`else` fallback), so ordinary and state styles share one selected conditional traversal and each reached condition expression is emitted once.
-3. Utilities lower into typed property slots. Important suffix `!` beats ordinary declarations; supported broad/axis/side shorthands resolve canonically independent of source order, while equal-rank conflicts remain later-wins. Flex shorthands split grow/shrink/basis fields, `truncate` and scroll split both overflow axes, `place-content-*` splits align/justify content, and physical radius utilities split per corner so a GPUI convenience method cannot reset another winning field. Unsupported classes, variants, and arbitrary-value forms are errors rather than silent degradation.
+3. Utilities lower into typed property slots. Important suffix `!` beats ordinary declarations; supported broad/axis/side shorthands resolve canonically independent of source order, while equal-rank conflicts remain later-wins. Flex shorthands split grow/shrink/basis fields, `truncate` and scroll split both overflow axes, `place-content-*` splits align/justify content, and named or safe arbitrary `px`/`rem` physical radius utilities split per corner so a GPUI convenience method cannot reset another winning field. Unsupported classes, variants, and arbitrary-value forms are errors rather than silent degradation.
 4. All 26 Tailwind 4.3.2 default color families and 11 shades are available to the implemented background, text, and border consumers. Their official OKLCH constants are preconverted to deterministic packed sRGB. These consumers accept bounded `/N`, `/[N%]`, and `/[0..1]` alpha; an alpha modifier on `#rrggbbaa` multiplies its normalized byte alpha and emits GPUI's `f32` alpha. GPUI 0.2.2 cannot retain wide-gamut components, CSS theme variables, or browser gamut-mapping behavior.
-5. `@click`, `focusable`, `active:`, `group-active:`, `focus:`, `in-focus:`, and every resolved static scroll utility require a stable GPUI `ElementId`; focus and in-focus styling also make the element focusable. Scroll builders are emitted after `.id(...)`, before state callbacks. Click modifiers are evaluated in source order; `.passive` is rejected because GPUI has no DOM listener-registration equivalent.
+5. Every intrinsic listener (`@click`, key down/up, modifier changes, mouse down/down-out/move/up/up-out, drag-move/drop, pinch, scroll-wheel, hover, focus, and blur), every drag/drop binding (`:drag-payload`, `:drag-preview`, `:can-drop`, and `:drag-over`), `:track-focus`, static/dynamic key context, `focusable`/`tab-index`, `active:`, `group-active:`, `focus:`, `focus-visible:`, `in-focus:`, and every resolved static scroll utility requires a stable GPUI `ElementId`. Identity is emitted before focus/context, retained state, and source-ordered interactions; focus/in-focus/focus-visible styling and focused keyboard listeners also make the element focusable. Button-filtered events require one `.left`, `.right`, or `.middle` selector. Non-click events take no modifiers. Click modifiers are evaluated in source order; `.passive` is rejected because GPUI has no DOM listener-registration equivalent. Focus/blur require an exact tracked handle. Drag payload/preview must be paired, `:can-drop` is singular, and exact-payload-type drag-over/drag-move/drop lanes may repeat while preserving attribute evaluation order.
 6. Every `v-for` root requires a dynamic `:key` for per-item identity and to namespace stateful descendants.
 7. Adjacent `v-if`/`v-else-if`/`v-else` siblings form one validated chain. When `v-if` and `v-for` share an element, the condition wraps the loop, so the loop alias is not in scope in the condition, matching Vue 3's precedence.
 8. `v-show` lowers to a visibility refinement on a real host element. `<template v-show>` and `<template v-for>` are errors because a flattened structural node has no visibility or keyed fragment identity in GPUI 0.2.2.
@@ -261,13 +318,13 @@ avoiding a dynamic property map, trait object, or per-field heap allocation.
 11. `grid-cols-N` and `grid-rows-N` map only positive `u16` counts (`1..=65535`) to GPUI's uniform tracks. Placement maps `col`/`row` auto, positive `u16` spans, full span, and independently cascading start/end lines onto GPUI [`GridPlacement`](https://docs.rs/gpui/0.2.2/gpui/enum.GridPlacement.html): explicit lines are restricted to its nonzero `i16` range (`-32768..=-1` or `1..=32767`). `none`, subgrid, arbitrary/custom-property placement, arbitrary track lists, and CSS template grammar have no equivalent in this mapping.
 12. Element opacity uses GPUI's [`Styled::opacity(f32)`](https://docs.rs/gpui/0.2.2/gpui/trait.Styled.html#method.opacity). Bare `opacity-N` is a `0..=100` percentage; bracketed unit values are `0..=1`, and bracketed percentages carry `%`. The safe subset rejects ambiguous `opacity-[50]` rather than silently choosing percentage semantics.
 13. Aspect ratios set GPUI's optional width/height `f32` refinement. `square`, `video`, and positive finite functional or bracketed `N/D` fractions are supported; `aspect-auto` is rejected because an absent refinement cannot reliably clear a ratio established by the regular or inherited style path.
-14. Line height uses GPUI [`Styled::line_height`](https://docs.rs/gpui/0.2.2/gpui/trait.Styled.html#method.line_height): the six named values become relative definite lengths, while a bare finite nonnegative `leading-N` becomes `N × 0.25rem`. Bracket arbitrary leading is not accepted.
+14. Typography maps `font-sans` to `.SystemUIFont` and `font-mono` to `SF Mono`; arbitrary family names remain rejected. The default text scale and safe finite nonnegative `text-[Npx]` / `text-[Nrem]` lower to typed sizes. Line height uses GPUI [`Styled::line_height`](https://docs.rs/gpui/0.2.2/gpui/trait.Styled.html#method.line_height): the six named values become relative definite lengths, a bare finite nonnegative `leading-N` becomes `N × 0.25rem`, and safe finite nonnegative `leading-[Npx]` / `leading-[Nrem]` lower to absolute lengths. Nonnegative unitless and percentage bracket forms lower to relative lengths, so `leading-[1.5]` and `leading-[150%]` both become `relative(1.5)`.
 15. A declared slot may be invoked through the typed Rust API or one direct `<slot>` outlet. Static outlet names and scoped props are type checked; unit props may be omitted, non-unit props are required, and fallback is lazy. A second outlet for the same declared slot is conservatively rejected even across conditional branches. Providers yield one `SlotContent` / `AnyElement`; multiple roots receive a synthetic `div`.
 16. A simple PascalCase identifier selects the component lane. Tags choose either a complete `:props={...}` value or individual attributes lowered through the generated typestate builder. They accept optional `:slots={...}`, or a non-self-closing body whose ordinary children provide `default` and whose direct `<template #name={pattern}>` children provide named slots; these modes cannot be mixed. `key` / `:key`, typed `@event` / `on:event` listeners, conditional chains, and keyed `v-for` are supported. Ordinary classes/IDs, `v-show`, and component-event modifiers remain rejected rather than introducing a semantic host wrapper.
 
 ## Evolution path
 
-1. Grow the typed intrinsic/component surface, keyboard semantics, accessibility, and the documented class matrix.
+1. Grow the remaining typed intrinsic/component surface beyond the implemented keyboard, pointer, drag/drop, focus, wheel/pinch, and controlled `TextModelBinding` host surface, including `v-model` template lowering and a custom-component model convention, broader keyboard semantics, accessibility, and the documented class matrix.
 2. Extend the persistent PascalCase host beyond the current typed prop/slot/event/lifecycle surface with carefully specified native event conveniences, provide/inject, and broader accessibility behavior while keeping `Render`/`Entity` as the ownership boundary.
 3. Grow the explicit `Memo<T, D>` cache into dependency-aware computed/watch conveniences where entity subscriptions and GPUI's executor provide the correct ownership and disposal semantics.
 4. If desired, add a `.vue`-like file frontend that emits the same internal template representation/Rust code. Keep it independent of the runtime.
@@ -275,7 +332,11 @@ avoiding a dynamic property map, trait object, or per-field heap allocation.
 
 ## Version boundary
 
-The implementation pins crates.io `gpui = 0.2.2`. GPUI is pre-1.0 and its API changes quickly; current Zed `main` documentation may not match this release. Upgrades should be explicit and should run macro expansion, reactivity, desktop example, and visual interaction tests.
+The implementation pins a fixed, API-compatible GPUI-CE commit. GPUI remains
+pre-1.0 and its API changes quickly; current Zed `main` documentation may not
+match this host revision. Upgrades should be explicit and should run macro
+expansion, reactivity, bridge-contract, counter/KAGE Editor desktop, and visual
+interaction tests.
 
 Implemented, planned, and host-incompatible behaviors are tracked separately in
 the [capability matrix](capability-matrix.md). A planned row there must not be

@@ -1,0 +1,5 @@
+error: v-text must be a Rust expression in `{ ... }`
+ --> tests/ui/fail_v_text_literal.rs:6:27
+  |
+6 |     let _ = view! { <span v-text="literal" /> };
+  |                           ^

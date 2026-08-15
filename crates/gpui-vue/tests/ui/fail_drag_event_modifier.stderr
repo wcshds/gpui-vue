@@ -1,0 +1,5 @@
+error: @drop does not support modifier `.stop`
+ --> tests/ui/fail_drag_event_modifier.rs:7:26
+  |
+7 |         <div id="target" on:drop.stop={drop_handler} />
+  |                          ^^

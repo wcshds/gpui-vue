@@ -1,0 +1,5 @@
+error: v-text replaces an intrinsic's child content and cannot be used with children
+ --> tests/ui/fail_v_text_children.rs:8:14
+  |
+8 |         <div v-text={label}>"existing child"</div>
+  |              ^

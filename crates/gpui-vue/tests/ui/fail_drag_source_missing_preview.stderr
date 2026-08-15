@@ -1,0 +1,5 @@
+error: :drag-payload requires a matching :drag-preview binding on the same host
+ --> tests/ui/fail_drag_source_missing_preview.rs:7:26
+  |
+7 |         <div id="source" :drag-payload={payload} />
+  |                          ^

@@ -1,0 +1,15 @@
+{
+  "name": "gpui-vue-docs",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "docs:check": "node scripts/check-docs.mjs && vitepress build docs"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
+}

@@ -8,15 +8,18 @@ It currently provides:
 - a typed `component!` DSL with direct markup, props, local state, setup, visual lifecycle hooks, native `Render`, GPUI events, and lazy slots;
 - persistent, keyed native hosts for self-closing and Vue-shaped non-self-closing PascalCase component tags;
 - compile-time Tailwind-like static and conditional class lowering;
-- fragments, conditional chains, `v-show`, keyed `v-for`, bindings, and click modifiers;
+- fragments, conditional chains, `v-show`, keyed `v-for`, focus/key-context bindings, typed native drag/drop, keyboard/pointer/wheel/pinch listeners, and click modifiers;
 - allocation-free `Local<T>` state and revision-keyed `Memo<T, D>` caches;
-- explicitly notified shared `Ref<T>` handles when shared ownership is intentional.
+- explicitly notified shared `Ref<T>` handles when shared ownership is intentional;
+- a retained, native single-line `TextInput` with UTF-16-correct IME composition,
+  selection, clipboard editing, and typed change/submit/escape events;
+- curated native modules for UI/paint/media/list/overlay/animation, application state, effects and asynchronous resources, assets/HTTP, plus feature-gated desktop bootstrap.
 
 There is no JavaScript engine, DOM facade, VDOM, runtime class parser, FFI mutation queue, or second rendering tree.
 
-The repository is a Cargo workspace: `crates/gpui-vue` contains the runtime,
-examples, and integration tests, while `crates/gpui-vue-macros` contains the
-procedural macros.
+The Cargo workspace contains the `crates/gpui-vue` runtime, examples, and
+integration tests; the `crates/gpui-vue-macros` procedural macro crate; and the
+independent `crates/gpui-vue/examples/kage_editor` application package.
 
 ## Counter
 
@@ -70,14 +73,121 @@ component! {
 Run the complete desktop example on Linux:
 
 ```bash
-cargo run --example counter --features desktop
+cargo run --locked --example counter --features desktop
 ```
 
 GPUI's desktop backend may require its documented platform development libraries. The default feature set is headless-friendly so compiler, state, and element-expansion tests do not need a display server.
 
+## Native text input
+
+`TextInput` is a complete 30-pixel-high single-line control rather than a
+key-down facade. It registers GPUI's platform input handler during paint, so
+Chinese, Japanese, Korean, dead-key, emoji, and other marked-text composition
+flows use the native IME. All platform ranges stay behind the API and are
+converted between UTF-16 code units and Rust UTF-8 byte boundaries.
+
+```rust,ignore
+use gpui_vue::{TextInputEvent, TextInputHandle, text_input};
+
+let search: TextInputHandle = text_input("Search components", cx);
+let subscription = cx.subscribe_in(&search, window, |parent, _, event, window, cx| {
+    match event {
+        TextInputEvent::Change(value) => parent.update_filter(value, cx),
+        TextInputEvent::Submit(value) => parent.search(value, cx),
+        TextInputEvent::Escape => parent.restore_workspace_focus(window),
+    }
+});
+```
+
+Insert `search.clone()` as a Rust expression in `view!`. The handle exposes
+`text`, `set_text`, `clear`, `set_placeholder`, style/editing-policy setters,
+`focus_handle`, `focus`, `blur`, `is_composing`, and `selected_range`. Programmatic `set_text` and
+`clear` are controlled updates and deliberately do not emit `Change`; user and
+IME edits do. Keep the returned subscription alive (or explicitly detach it)
+according to the parent component's lifetime policy.
+
+For a first-class configured field, use `text_input_with_config` with
+`TextInputConfig` and `TextInputStyle`. The typed style controls fill or fixed
+width, height, padding, font, font size, background, text, placeholder, border,
+focus border, selection, caret, corner radius, and disabled opacity. Config and
+runtime setters support disabled, read-only, and a Unicode-grapheme limit for
+later user edits. Parent-controlled values are trusted and are not rewritten
+when the limit changes. Marked composition may temporarily exceed that limit,
+so phonetic IME input is never truncated before commit. Secure/password entry is intentionally
+not claimed: the pinned host has no complete sensitive-input contract, and
+drawing bullets alone would not secure clipboard, IME, or accessibility paths.
+
+`TextModelBinding::bind` owns input-to-parent and parent-to-input native
+subscriptions for controlled `String` or `Local<String>` state;
+`TextModelBinding::bind_ref` covers a shared `Ref<String>`. Equal-value silent
+reconciliation preserves an active marked range instead of restarting IME
+composition. Store the binding with the parent and drop it to cancel both
+directions.
+
+## KAGE Editor
+
+`kage-editor` is a native, dark-neutral macOS Pro example backed by a pinned
+revision of [`wcshds/kage`](https://github.com/wcshds/kage). It implements the
+established 200×200 KAGE editing workflow with direct and marquee selection,
+multi-selection, connected control-point dragging, eight-handle resize,
+pasteboard copy/cut/paste, 30-step undo/redo, stroke type/head/tail editing,
+type-0 rotate/flip records, searchable type-99 parts, metadata-backed `-10…10`
+stretch/decompose, intelligent freehand recognition
+with endpoint/axis snapping, Mincho/Gothic rendering, optional curve-aware
+smooth Mincho outlines, configurable grids, recursive centerlines, knockout
+previews, keyboard shortcuts, and five interface languages. On macOS, native
+trackpad pinch zoom keeps the gesture
+position anchored on the canvas; modifier-wheel zoom remains available as a
+mouse and platform fallback.
+
+```bash
+cargo run --locked -p kage-editor
+```
+
+KAGE Editor is an independent example package with its own manifest at
+`crates/gpui-vue/examples/kage_editor/Cargo.toml`. From that directory it can
+also be launched with plain `cargo run --locked`; its application-only dependencies do
+not become features or dependencies of the `gpui-vue` library package.
+
+The editor uses `component!` for its native root and `view!` for every ordinary
+workspace panel, modal, list, image, input host, and reusable control, with
+`gpui_vue::paint::drawing_surface` reserved for its precision vector canvas.
+Desktop startup, common UI values, image
+transport, and custom painting stay behind the curated `desktop`, `ui`, `http`,
+and `paint` bridges. The KAGE Editor source does not import GPUI directly, and
+there is no WebView, DOM, CSS runtime, or bundled JavaScript.
+Its component browser starts with 50 live, randomized GlyphWiki results, can
+refresh that batch, displays official thumbnails, and searches GlyphWiki
+directly over HTTPS. Selecting a type-99 component resolves its complete remote
+dependency tree atomically before insertion; no approximate component sources
+are bundled into the runtime. Authenticated submit is deliberately omitted:
+Export KAGE opens a scrollable, line-numbered view of
+the complete filtered source, normalizing compact `$` separators to newlines.
+The explicit **Copy all** action copies that same newline-separated text without
+`$` characters. The interaction model is an independent Rust implementation based
+on public KAGE behavior and does not copy the upstream `kage-editor` project's
+GPL source.
+
+The engine revision is locked in `Cargo.lock` for reproducible builds. The
+upstream `wcshds/kage` repository does not currently publish license metadata,
+so distributors should confirm its licensing terms before shipping binaries.
+
 ## Template syntax
 
-The intrinsic surface contains `div`, `view`, `text`, `span`, and `button`. All lower directly to native GPUI elements. `button` adds pointer, focus, tab-stop, keyboard activation, and GPUI click behavior, but is not yet a complete accessibility-role abstraction. Arbitrary GPUI elements can be inserted as Rust expressions.
+The intrinsic surface contains `div`, `view`, `text`, `span`, `button`, and
+`img`. The container-like tags lower to a native GPUI `div`; `button` adds
+pointer, focus, tab-stop, keyboard activation, and GPUI click behavior, but is
+not yet a complete accessibility-role abstraction. `img` lowers to GPUI's
+native image pipeline, requires exactly one static `src` or dynamic `:src`, and
+cannot have children. It accepts typed `:object-fit={ObjectFit}` plus lazy
+`:loading={Fn() -> AnyElement}` and `:fallback={Fn() -> AnyElement}` bindings;
+these map to pinned GPUI `StyledImage` methods rather than DOM strings. The
+binding expressions evaluate once in attribute source order and do not require
+stable identity. It also accepts the same class, runtime style, identity, and
+structural bindings as the other real intrinsic hosts. Typed native
+elements—including values produced through the curated `ui` module or
+`paint::drawing_surface`—can be inserted as Rust expressions, so applications
+do not need direct GPUI imports for the supported seams.
 
 ```rust,ignore
 view! {
@@ -113,11 +223,91 @@ view! {
 
 Interactive elements require a stable `id`. Every `v-for` root requires a dynamic `:key={...}` so each iteration namespaces its GPUI element state, including stateful descendants. `:id` and `:key` also accept Vue 3.4-style same-name shorthand.
 
-Click handlers support `.stop`, `.prevent`, `.ctrl`, `.alt`, `.shift`, `.meta`, and `.exact` in source order. `.passive` is rejected because it configures a DOM listener rather than a GPUI event. Other event types and modifiers remain roadmap items.
+The bare `occlude` host attribute installs GPUI's native blocking hitbox for a
+modal scrim or another pointer barrier. It requires a stable `id` (or loop key)
+and blocks pointer interaction, including scrolling, from reaching hitboxes
+behind the host. Keyboard modality remains application state and focus policy,
+not a side effect of pointer occlusion.
+
+Intrinsic hosts accept `@click`, `@key-down`, `@key-up`,
+`@modifiers-changed`, `@mouse-down`, `@mouse-down-out`, `@mouse-move`,
+`@drag-move`, `@mouse-up`, `@mouse-up-out`, `@pinch`, `@scroll-wheel`, `@hover`,
+`@drop`, `@focus`, and `@blur`; every spelling also has an `on:` alias. Mouse down/down-out/up/up-out
+require exactly one explicit `.left`, `.right`, or `.middle` selector.
+`@mouse-down-out` uses GPUI's outside-bounds capture listener and filters its
+otherwise any-button event to that selector. All non-click listeners take no
+modifiers. Click handlers retain `.stop`,
+`.prevent`, `.ctrl`, `.alt`, `.shift`, `.meta`, and `.exact` in source order;
+`.passive` is rejected because it configures a DOM listener rather than a GPUI
+event. Each interactive host requires a stable `id` or loop `:key`, and
+duplicate singleton/non-repeatable bindings are compile errors.
+
+Typed native drag/drop uses paired `:drag-payload={payload_expression}` and
+`:drag-preview={preview_constructor}` on a source; the constructor implements
+`Fn(&T, ScreenPoint, &mut Window, &mut App) -> Entity<Preview>`. Targets may add one type-erased `:can-drop` predicate and repeated
+exact-payload-type `:drag-over`, `@drag-move`, and `@drop` lanes. Every lane
+requires stable identity; payload/preview expressions and listeners retain
+attribute source evaluation order. This is GPUI's in-process `TypeId`-selected
+contract, not DOM `DataTransfer` or MIME-string negotiation.
+
+`@hover` receives `&bool` (`true` on entry, `false` on exit). `@focus` and
+`@blur` receive `&mut Window` and `&mut App`; they require
+`:track-focus={&focus_handle}` and observe exact acquisition/loss of that handle,
+not descendant `focus-in` / `focus-out`. Their native subscriptions are retained
+with the stable element identity and reconciled if the tracked handle changes.
+
+`@pinch` receives the native gesture path on macOS and Wayland. On Windows,
+precision-trackpad pinch follows the platform's Ctrl-wheel behavior and is
+handled through `@scroll-wheel`; `@pinch` does not claim a separate native
+Windows gesture. This native event surface is supplied by a fixed,
+API-compatible GPUI-CE commit.
+
+Native focus dispatch is configured with `:track-focus={&focus_handle}` plus a
+static `key-context="Editor"` or dynamic `:key-context={context}`. These
+bindings also require stable identity. Macro lowering installs identity first,
+then focus/key context, and finally evaluates listener expressions in source
+order. Key-down, key-up, and modifier-change listeners participate in GPUI's
+focused dispatch path.
 
 Static `class` values must be literals. `:class` accepts a literal or nested Rust `if` expression whose leaves are literals. Every branch is compiled ahead of time, so runtime values select typed GPUI calls rather than parse strings. Unknown utilities, runtime class strings, mismatched tags, and unstable interactive nodes are compile errors.
 
+Parent intrinsics also accept `v-text={expression}` when the expression should
+own their complete child-content lane. The expression is evaluated once per
+render, stored in a local, and appended with GPUI's typed `.child(value)`
+semantics; no HTML parser or escaping layer is involved. `v-text` cannot be
+mixed with any body children and is rejected on `img`, structural `template`,
+slot outlets, and PascalCase components. It remains compatible with the
+ordinary structural directives and keyed-loop identity rules.
+
 Static and conditional classes are merged into one typed cascade per branch. Each reached condition is evaluated once, and each selected branch registers at most one GPUI callback for each supported interaction state, including when both `class` and `:class` contribute variants.
+
+Intrinsic `:style` handles values that are genuinely runtime-dependent without
+introducing CSS strings or a runtime parser. Its Rust expression must produce a
+callback from a fresh `StyleRefinement` to the completed refinement:
+
+```rust,ignore
+use gpui_vue::ui::{px, rgb};
+
+view! {
+    <div
+        class="h-8 rounded text-slate-400 hover:text-white"
+        :style={move |style| {
+            style
+                .w(px(runtime_width))
+                .text_color(rgb(runtime_color))
+        }}
+    >
+        "Measured at render time"
+    </div>
+}
+```
+
+The callback expression is evaluated once per render. Its base refinement is
+applied after the selected regular `class` / `:class` branch, while native
+hover, active, and focus refinements still apply in GPUI's documented state
+order. The callback receives `StyleRefinement`, not the host element, so
+stateful-only operations such as scroll overflow cannot bypass stable-ID
+validation; use the corresponding static class on an identified element.
 
 Nested fragments and structural `<template>` nodes flatten into their parent. GPUI 0.2.2 has no wrapper-free root fragment, so multiple roots receive one synthetic outer `div`. `<template v-for>` is rejected because GPUI cannot preserve keyed fragment identity without adding a layout node.
 
@@ -128,10 +318,10 @@ Supported behavior includes:
 - flex/grid/display, positioning, cursors, hidden/static-scroll overflow, and typed alignment/content distribution;
 - open numeric spacing, size, gap, and inset families, fractions, and safe negative margin/inset values;
 - representable arbitrary lengths such as `w-[62.5%]`, `-mt-[4px]`, and `h-[2rem]`;
-- font size/weight, canonical line-height values, line clamp, opacity, directional border width, radius, aspect ratio, and shadows;
+- native `font-sans` / `font-mono`, font weight, default and arbitrary `px`/`rem` text sizes, named/numeric and arbitrary `px`/`rem`/unitless/percentage line heights, line clamp, opacity, directional border width, named and safe arbitrary `px`/`rem` physical radius, aspect ratio, and shadows;
 - all 26 Tailwind 4.3.2 default color families and 286 shades, arbitrary hex colors, and compile-time color alpha modifiers;
 - physical side/corner radius cascades, uniform grid tracks, and typed grid span/start/end placement;
-- `hover:`, `active:`, `focus:`, `in-focus:`, `group-hover:`, and `group-active:` variants, plus the unqualified `group` marker;
+- `hover:`, `active:`, `focus:`, `focus-visible:`, `in-focus:`, `group-hover:`, and `group-active:` variants, plus the unqualified `group` marker;
 - Tailwind v4's trailing important form, such as `bg-blue-500!`;
 - property-slot conflict handling, including source-order-independent broad → axis → side precedence and fieldwise `place-content-*`/alignment conflicts.
 
@@ -143,13 +333,63 @@ The unqualified `group` marker and `group-hover:` / `group-active:` use GPUI's n
 
 `in-focus:` uses GPUI's native ancestor-or-self focus relation, so it also matches the focused target itself, unlike Tailwind's usual implicit-ancestor selector. `focus-within:` asks the inverse question — whether self or a descendant has focus — and is a targeted compile error because GPUI 0.2.2 has no fluent `contains_focused` style seam.
 
-Alignment values backed by GPUI's public enums include `items-stretch`, `justify-evenly`/`justify-stretch`, representable `self-*`, and `place-content-{around,between,center,end,evenly,start,stretch}`. `place-content-*` expands into independent align-content and justify-content slots; later Tailwind longhands and trailing `!` resolve per field in Tailwind 4.3.2 canonical order, independent of class-token order. The `start`/`end` mappings are exact for GPUI/Taffy's exposed layout axes, not a promise of browser writing-mode or direction behavior. Reset/inheritance forms (`content-normal`, `justify-normal`, `self-auto`), safe/last-baseline forms, and `order-*` fail at macro expansion rather than silently changing semantics.
+`focus-visible:` uses GPUI's exact-focus plus last-input-was-keyboard
+predicate. It requires stable identity and makes the host focusable. This is a
+native keyboard-modality heuristic, not a claim of byte-for-byte browser
+pseudo-class behavior; same-property cross-state combinations are rejected
+when Tailwind and GPUI would choose different winners.
 
-`overflow-scroll`, `overflow-x-scroll`, and `overflow-y-scroll` are static-only retained-state utilities. They require a stable `id` (or loop key), and their GPUI stateful methods are emitted only after identity lowering. They provide GPUI's retained clipping and wheel-scrolling path, not browser UA scrollbar chrome or browser touch, keyboard, and accessibility parity. A scroll utility under an interaction variant is rejected because GPUI style callbacks cannot change retained scroll state; `overflow-auto`, `overflow-clip`, `overflow-visible`, and display modes without an exact GPUI counterpart also produce host-specific diagnostics.
+Alignment values backed by GPUI's public enums include `items-stretch`, `justify-evenly`/`justify-stretch`, representable `self-*`, and `place-content-{around,between,center,end,evenly,start,stretch}`. `place-content-*` expands into independent align-content and justify-content slots; later Tailwind longhands and trailing `!` resolve per field in Tailwind 4.3.2 canonical order, independent of class-token order. The `start`/`end` mappings are exact for GPUI/Taffy's exposed layout axes, not a promise of browser writing-mode or direction behavior. Static `content-normal` lowers to GPUI's native ordinary-state reset and participates in canonical/important alignment cascade; its interaction variants fail precisely because `None` in a state refinement cannot clear an already-resolved base field. Other reset/inheritance forms (`justify-normal`, `self-auto`), safe/last-baseline forms, and `order-*` fail at macro expansion rather than silently changing semantics.
+
+`overflow-clip`, `overflow-visible`, and their per-axis forms map directly to
+GPUI's non-retained overflow enums. They need no scroll state and can appear in
+supported interaction variants. `overflow-scroll`, `overflow-x-scroll`, and
+`overflow-y-scroll` remain static-only retained-state utilities: they require a
+stable `id` (or loop key), and their GPUI stateful methods are emitted only
+after identity lowering. They provide GPUI's retained clipping and
+wheel-scrolling path, not browser UA scrollbar chrome or browser touch,
+keyboard, and accessibility parity. A scroll utility under an interaction
+variant is rejected because GPUI style callbacks cannot change retained scroll
+state; `overflow-auto` and display modes without an exact GPUI counterpart
+still produce host-specific diagnostics.
 
 Tailwind's default colors originate as OKLCH values. They are converted once into a checked, embedded sRGB table during development, so rendering does not parse colors or perform gamut conversion. This preserves the zero-parser hot path, while accepting that GPUI's packed sRGB color input cannot retain browser wide-gamut behavior exactly.
 
-Color consumers accept `/N`, `/[N%]`, and `/[0..1]` alpha forms; an alpha modifier multiplies an existing `#rrggbbaa` alpha. The embedded RGB channels remain precomputed, while GPUI receives the final alpha as `f32`. Grid support includes positive uniform track counts plus representable row/column auto, span, full-span, start, and end placement. Reset forms such as `grid-cols-none` are rejected because GPUI cannot reliably clear inherited tracks through the same refinement API. `aspect-square`, `aspect-video`, positive finite fractions, and Tailwind's named/numeric leading scale are also compiled into typed GPUI refinements.
+Color consumers accept `/N`, `/[N%]`, and `/[0..1]` alpha forms; an alpha modifier multiplies an existing `#rrggbbaa` alpha. The embedded RGB channels remain precomputed, while GPUI receives the final alpha as `f32`. Grid support includes positive uniform track counts plus representable row/column auto, span, full-span, start, and end placement. Reset forms such as `grid-cols-none` are rejected because GPUI cannot reliably clear inherited tracks through the same refinement API. `aspect-square`, `aspect-video`, positive finite fractions, `text-[11px]` / `text-[0.75rem]`, and `leading-[20px]` / `leading-[1.5rem]` are compiled into typed GPUI refinements. Nonnegative unitless and percentage line heights are also typed relative lengths: `leading-[1.5]` and `leading-[150%]` both lower to `relative(1.5)`.
+
+## Curated native modules
+
+`view!` and `component!` remain the primary UI authoring surface. When native
+runtime values are required, `gpui-vue` exposes responsibility-focused modules
+instead of forcing application code to depend on GPUI paths:
+
+- `ui` exports common element/event/value types—including the typed
+  `StyleRefinement` used by reusable `:style` callbacks—and constructors such
+  as `div`, `image`, `px`, `rgb`, `rgba`, and `hsla`; its
+  `write_clipboard_text` / `read_clipboard_text` helpers cover plain-text
+  clipboard semantics without exposing GPUI's multi-entry clipboard item;
+- `paint` exports native geometry/path types and `drawing_surface`, whose typed
+  prepaint result is passed to the matching paint phase; `media` supplies raster
+  and SVG elements, while `virtual_list` supplies variable-height and uniform
+  native list primitives;
+- `overlay` supplies deferred and window-fitted anchored overlays without
+  creating another component tree; `animation` exposes GPUI's retained
+  animation element and native easing functions;
+- `state` supplies typed application globals and global observation;
+- `effects` owns observer, event-subscription, deferred/next-frame, release, and
+  owner-safe foreground-task seams; `async_state` adds `AsyncState` and the
+  cancellable, stale-result-safe `AsyncResource` state machine on that GPUI task
+  lifetime;
+- `http` exports the transport types needed by native image and API clients;
+  `assets` provides `EmbeddedAssets`, whose `with_file(...)` accepts
+  `include_bytes!` output directly;
+- `desktop` (with the `desktop` feature) provides `DesktopApp`, `WindowConfig`,
+  application plugins and setup callbacks, URL/reopen hooks, and typed initial or
+  additional native-window mounting.
+
+These modules are typed native seams, not another widget tree or renderer. The
+lower-level `gpui` re-export remains available for capabilities outside the
+curated surface.
 
 Element opacity distinguishes Tailwind's ordinary percentage scale (`opacity-50`) from arbitrary fractions (`opacity-[.5]`) and arbitrary percentages (`opacity-[50%]`); malformed, non-finite, ambiguous, or out-of-range values fail at macro expansion.
 
@@ -158,8 +398,8 @@ Element opacity distinguishes Tailwind's ordinary percentage scale (`opacity-50`
 `component!` is the canonical Rust-native SFC frontend. It emits ordinary documented Rust items and a GPUI entity; it does not introduce another component runtime.
 
 ```rust,ignore
-use gpui_vue::gpui::SharedString;
 use gpui_vue::prelude::*;
+use gpui_vue::ui::SharedString;
 
 /// Props passed to the counter's named action slot.
 pub struct ActionSlotProps {
@@ -366,7 +606,7 @@ let value = doubled.get_or_update(count.revision(), || count.get() * 2);
 
 The selected design borrows the compile-away idea but targets GPUI builders directly. If exact, unmodified Vue SFC execution later becomes mandatory, it belongs in a separate optional QuickJS compatibility backend with explicit startup, memory, and maintenance costs.
 
-See the [architecture decision](docs/architecture.md), detailed [capability matrix](docs/capability-matrix.md), and [counter example](crates/gpui-vue/examples/counter.rs).
+See the [architecture decision](docs/architecture.md), detailed [capability matrix](docs/capability-matrix.md), [counter example](crates/gpui-vue/examples/counter.rs), and complete [KAGE Editor application](crates/gpui-vue/examples/kage_editor/).
 
 ## Quality gates
 
@@ -374,15 +614,17 @@ The workspace denies missing documentation for public and private items, forbids
 
 ```bash
 cargo fmt --all -- --check
-cargo test --workspace --all-targets --no-default-features
-cargo clippy --workspace --all-targets --no-default-features -- -D warnings
-cargo check --workspace --all-targets --features desktop
-cargo clippy --workspace --all-targets --features desktop -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --no-default-features
+cargo test --locked --workspace --all-targets --no-default-features
+cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+cargo check --locked --workspace --all-targets --no-default-features --features desktop
+cargo clippy --locked --workspace --all-targets --no-default-features --features desktop -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --no-default-features
+pnpm install --frozen-lockfile
+pnpm docs:check
 ```
 
 The test suite includes compile-fail golden cases for unstable loops, structural-directive misuse, DOM-only modifiers, undocumented component declarations, duplicate component sections, and unsupported Tailwind utilities. The same locked commands run in GitHub Actions.
 
 ## Status
 
-This repository contains a tested native compiler foundation, not a complete Vue 3 implementation. The largest remaining areas are external SFC files, arbitrary `<script setup>`, provide/inject, broader native event/modifier semantics, automatic dependency-tracked computed/watchers, transitions, full accessibility semantics, stacked/responsive/data Tailwind variants, and the remaining Tailwind vocabulary.
+This repository contains a tested native compiler foundation, not a complete Vue 3 implementation. The largest remaining areas are external SFC files, arbitrary `<script setup>`, provide/inject, `v-model` template lowering and a general custom-component model convention, automatic dependency-tracked computed/watchers, transitions, full accessibility semantics, stacked/responsive/data Tailwind variants, and the remaining Tailwind vocabulary. Typed GPUI drag/drop host bindings are implemented; browser `DataTransfer` compatibility is not a target of that surface.

@@ -1,0 +1,35 @@
+[package]
+name = "kage-editor"
+version.workspace = true
+edition.workspace = true
+description = "A native macOS Pro KAGE Editor built with gpui-vue"
+license.workspace = true
+readme = "README.md"
+publish = false
+
+[package.metadata.bundle]
+name = "Kage Editor"
+identifier = "com.wcshds.kage-editor"
+icon = ["assets/KageEditor.png", "assets/KageEditor@2x.png"]
+category = "Developer Tool"
+short_description = "A native macOS KAGE glyph editor"
+long_description = "A precise, native macOS editor for creating and refining KAGE glyph stroke data, built with gpui-vue."
+
+[lints]
+workspace = true
+
+[features]
+default = ["desktop"]
+desktop = ["gpui-vue/desktop"]
+
+[dependencies]
+gpui-vue = { path = "../..", default-features = false }
+kage-rs = { package = "kage-engine", git = "https://github.com/wcshds/kage" }
+smol = "2.0"
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+url = "2.5"
+
+[[bin]]
+name = "kage-editor"
+path = "src/main.rs"
+required-features = ["desktop"]

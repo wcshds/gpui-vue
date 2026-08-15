@@ -1,0 +1,5 @@
+error: duplicate :drag-payload binding; a host can initiate only one native drag
+  --> tests/ui/fail_drag_duplicate_payload.rs:10:13
+   |
+10 |             :drag-payload={second}
+   |             ^

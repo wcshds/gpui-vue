@@ -1,0 +1,5 @@
+error: :loading is only supported on the <img> intrinsic
+ --> tests/ui/fail_image_binding_non_img.rs:6:26
+  |
+6 |     let _ = view! { <div :loading={|| unreachable!()} /> };
+  |                          ^

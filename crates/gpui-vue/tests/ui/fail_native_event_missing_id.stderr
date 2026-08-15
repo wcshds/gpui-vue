@@ -1,0 +1,5 @@
+error: interactive elements require a stable `id`; inside v-for use `:key={...}`
+ --> tests/ui/fail_native_event_missing_id.rs:7:10
+  |
+7 |         <div @key-up={|_, _, _| {}} />
+  |          ^^^

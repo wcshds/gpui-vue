@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "crates/gpui-vue/examples/kage_editor"]
 default-members = ["crates/gpui-vue"]
 resolver = "3"
 
@@ -10,7 +10,9 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [workspace.dependencies]
-gpui = { version = "=0.2.2", default-features = false }
+# Fixed 0.2.2-compatible host with native macOS/Wayland pinch dispatch. The
+# crates.io GPUI 0.2.2 release stops at scroll-wheel events.
+gpui = { package = "gpui-ce", git = "https://github.com/MostlyKIGuess/gpui-ce", rev = "94ea8d4852b733be3397b96803caa023abb0be2f", default-features = false }
 gpui-vue-macros = { path = "crates/gpui-vue-macros", version = "0.1.0" }
 proc-macro-crate = "3.4"
 proc-macro2 = "1.0"
@@ -30,3 +32,10 @@ missing_docs_in_private_items = "deny"
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
 bare_urls = "deny"
+
+[profile.release]
+debug = 0
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+incremental = false

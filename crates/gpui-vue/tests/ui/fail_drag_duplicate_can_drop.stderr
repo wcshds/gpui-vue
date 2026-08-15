@@ -1,0 +1,5 @@
+error: duplicate :can-drop binding; a host has one native drop predicate
+ --> tests/ui/fail_drag_duplicate_can_drop.rs:7:44
+  |
+7 |         <div id="target" :can-drop={first} :can-drop={second} />
+  |                                            ^

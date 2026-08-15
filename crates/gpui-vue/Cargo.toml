@@ -16,9 +16,14 @@ desktop = ["gpui/font-kit", "gpui/wayland", "gpui/x11"]
 [dependencies]
 gpui.workspace = true
 gpui-vue-macros.workspace = true
+unicode-segmentation = "1.13"
 
 [[example]]
 name = "counter"
+required-features = ["desktop"]
+
+[[example]]
+name = "docs_gallery"
 required-features = ["desktop"]
 
 [dev-dependencies]

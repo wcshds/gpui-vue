@@ -1,0 +1,5 @@
+error: v-text requires a parent intrinsic and cannot be used on <template>
+ --> tests/ui/fail_v_text_template.rs:7:31
+  |
+7 |     let _ = view! { <template v-text={label} /> };
+  |                               ^

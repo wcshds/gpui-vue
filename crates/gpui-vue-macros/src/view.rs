@@ -216,20 +216,48 @@ enum AttributeValue {
 /// Mutable bindings collected before validating an intrinsic element.
 #[derive(Debug, Default)]
 struct ElementBindings {
+    /// Stable source-order position of the intrinsic within this macro call.
+    element_ordinal: usize,
     /// Static Tailwind class literal.
     class: Option<LitStr>,
     /// Compile-time-known conditional class branches.
     dynamic_class: Option<DynamicClassBinding>,
+    /// Typed runtime refinement applied after ordinary class styles.
+    inline_style: Option<Expr>,
+    /// Native child content supplied by the intrinsic-only `v-text` directive.
+    text_content: Option<OrderedExpression>,
+    /// Required source used only by the native image intrinsic.
+    image_source: Option<OrderedTokens>,
+    /// Native object-fit policy used only by the image intrinsic.
+    image_object_fit: Option<OrderedExpression>,
+    /// Lazy native loading view used only by the image intrinsic.
+    image_loading: Option<OrderedExpression>,
+    /// Lazy native error fallback used only by the image intrinsic.
+    image_fallback: Option<OrderedExpression>,
     /// Explicit GPUI element identity.
     id: Option<TokenStream>,
     /// Vue key lowered to a GPUI element identity.
     key: Option<TokenStream>,
     /// Whether the key came from a dynamic `:key` binding.
     has_bound_key: bool,
-    /// Optional click listener and modifiers.
-    click: Option<EventBinding>,
+    /// Explicit focus handle tracked by the native GPUI host.
+    track_focus: Option<Expr>,
+    /// Static or dynamic keyboard context supplied to GPUI.
+    key_context: Option<TokenStream>,
+    /// Source-ordered native host event listeners.
+    events: Vec<EventBinding>,
+    /// Typed value retained by GPUI for one native drag operation.
+    drag_payload: Option<OrderedExpression>,
+    /// Typed entity constructor used for the native drag preview.
+    drag_preview: Option<OrderedExpression>,
+    /// Optional type-erased predicate gating native drop dispatch.
+    can_drop: Option<OrderedExpression>,
+    /// Source-ordered typed styles applied while matching drags hover the host.
+    drag_over: Vec<OrderedExpression>,
     /// Whether GPUI should track focus for this element.
     focusable: bool,
+    /// Whether this host blocks pointer interaction with hitboxes behind it.
+    occlude: bool,
     /// Explicit keyboard tab order.
     tab_index: Option<Expr>,
 }
@@ -334,13 +362,122 @@ struct DynamicClassBinding {
     span: Span,
 }
 
-/// A click handler plus source-ordered Vue event modifiers.
+/// One intrinsic expression retaining its exact attribute position.
+#[derive(Debug)]
+struct OrderedExpression {
+    /// User expression evaluated exactly once.
+    expression: Expr,
+    /// Zero-based position in the host's source attribute list.
+    source_index: usize,
+    /// Attribute span retained for generated calls and diagnostics.
+    span: Span,
+}
+
+/// One intrinsic token expression retaining its exact attribute position.
+///
+/// Image `src` accepts both a Rust expression and a static string literal, so
+/// it cannot use [`OrderedExpression`] without fabricating a parsed Rust AST.
+#[derive(Debug)]
+struct OrderedTokens {
+    /// User value evaluated exactly once.
+    tokens: TokenStream,
+    /// Zero-based position in the host's source attribute list.
+    source_index: usize,
+    /// Attribute span retained for generated calls and diagnostics.
+    span: Span,
+}
+
+/// One validated native GPUI event handler.
 #[derive(Debug)]
 struct EventBinding {
+    /// Native event and any required mouse button.
+    kind: EventKind,
     /// User-provided GPUI listener expression.
     handler: Expr,
-    /// Modifiers applied in source order.
+    /// Click-only modifiers applied in source order.
     modifiers: Vec<EventModifier>,
+    /// Zero-based position in the host's source attribute list.
+    source_index: usize,
+    /// Attribute span retained for cross-binding diagnostics.
+    span: Span,
+}
+
+/// One source-positioned native interaction or content binding on an intrinsic.
+enum OrderedHostInteraction<'a> {
+    /// An ordinary or typed native event listener.
+    Event(&'a EventBinding),
+    /// The payload half of the one drag-source pair.
+    DragPayload(&'a OrderedExpression),
+    /// The preview-constructor half of the one drag-source pair.
+    DragPreview(&'a OrderedExpression),
+    /// The host's one type-erased drop predicate.
+    CanDrop(&'a OrderedExpression),
+    /// One exact-payload-type drag-over style lane.
+    DragOver(&'a OrderedExpression),
+    /// One intrinsic text child evaluated at its source attribute position.
+    Text(&'a OrderedExpression),
+}
+
+impl OrderedHostInteraction<'_> {
+    /// Returns the exact source attribute position used for stable lowering.
+    const fn source_index(&self) -> usize {
+        match self {
+            Self::Event(event) => event.source_index,
+            Self::DragPayload(binding)
+            | Self::DragPreview(binding)
+            | Self::CanDrop(binding)
+            | Self::DragOver(binding)
+            | Self::Text(binding) => binding.source_index,
+        }
+    }
+}
+
+/// A native GPUI event supported by an intrinsic host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EventKind {
+    /// Pointer click with optional Vue-compatible guards and side effects.
+    Click,
+    /// Keyboard input delivered to the host's key context.
+    KeyDown,
+    /// Keyboard release delivered to the host's key context.
+    KeyUp,
+    /// Keyboard modifier-state change delivered along the focused dispatch path.
+    ModifiersChanged,
+    /// Pointer press for one explicit mouse button.
+    MouseDown(MouseButtonBinding),
+    /// Pointer press outside the host for one explicit mouse button.
+    MouseDownOut(MouseButtonBinding),
+    /// Pointer movement over the host.
+    MouseMove,
+    /// Movement during an active drag whose payload has one exact Rust type.
+    DragMove,
+    /// Pointer release for one explicit mouse button.
+    MouseUp(MouseButtonBinding),
+    /// Pointer release after leaving the host for one explicit mouse button.
+    MouseUpOut(MouseButtonBinding),
+    /// Native trackpad pinch/magnification input.
+    Pinch,
+    /// Native scroll-wheel input.
+    ScrollWheel,
+    /// Native hitbox hover entry and exit.
+    Hover,
+    /// A drop whose payload has one exact Rust type.
+    Drop,
+    /// Exact focus acquisition for an explicitly tracked focus handle.
+    Focus,
+    /// Exact focus loss for an explicitly tracked focus handle.
+    Blur,
+}
+
+/// A source mouse-button modifier lowered to GPUI's native enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MouseButtonBinding {
+    /// Primary/left pointer button.
+    Left,
+    /// Secondary/right pointer button.
+    Right,
+    /// Middle pointer button.
+    Middle,
 }
 
 /// Event modifiers with a direct GPUI equivalent for click events.
@@ -697,13 +834,51 @@ fn expect_expression(value: Option<AttributeValue>, span: Span, name: &str) -> R
 
 impl ElementBindings {
     /// Collects and validates the supported attributes for an intrinsic tag.
-    fn parse(element: &Element, is_button: bool) -> Result<Self> {
+    fn parse(element: &Element, is_button: bool, is_image: bool) -> Result<Self> {
         let mut bindings = Self {
             focusable: is_button,
+            element_ordinal: element.ordinal,
             ..Self::default()
         };
-        for attribute in &element.attributes {
-            bindings.apply_attribute(attribute)?;
+        for (source_index, attribute) in element.attributes.iter().enumerate() {
+            bindings.apply_attribute(attribute, is_image, source_index)?;
+        }
+        if let Some(text) = &bindings.text_content
+            && !element.children.is_empty()
+        {
+            return Err(syn::Error::new(
+                text.span,
+                "v-text replaces an intrinsic's child content and cannot be used with children",
+            ));
+        }
+        match (&bindings.drag_payload, &bindings.drag_preview) {
+            (Some(payload), None) => {
+                return Err(syn::Error::new(
+                    payload.span,
+                    ":drag-payload requires a matching :drag-preview binding on the same host",
+                ));
+            }
+            (None, Some(preview)) => {
+                return Err(syn::Error::new(
+                    preview.span,
+                    ":drag-preview requires a matching :drag-payload binding on the same host",
+                ));
+            }
+            (Some(_), Some(_)) | (None, None) => {}
+        }
+        if let Some(event) = bindings
+            .events
+            .iter()
+            .find(|event| event.kind.is_focus_lifecycle())
+            && bindings.track_focus.is_none()
+        {
+            return Err(syn::Error::new(
+                event.span,
+                format!(
+                    "@{} requires :track-focus={{&focus_handle}} so GPUI can observe one exact native focus handle",
+                    event.kind.diagnostic_name(),
+                ),
+            ));
         }
         if bindings.id.is_some() && bindings.key.is_some() {
             return Err(syn::Error::new(
@@ -721,21 +896,137 @@ impl ElementBindings {
     }
 
     /// Applies one parsed source attribute while preserving duplicate diagnostics.
-    fn apply_attribute(&mut self, attribute: &Attribute) -> Result<()> {
+    fn apply_attribute(
+        &mut self,
+        attribute: &Attribute,
+        is_image: bool,
+        source_index: usize,
+    ) -> Result<()> {
         match attribute.name.as_str() {
             "class" => self.set_class(attribute),
+            "src" | ":src" if is_image => self.set_image_source(attribute, source_index),
+            ":object-fit" if is_image => self.set_image_object_fit(attribute, source_index),
+            ":loading" if is_image => self.set_image_loading(attribute, source_index),
+            ":fallback" if is_image => self.set_image_fallback(attribute, source_index),
+            "src" | ":src" => Err(syn::Error::new(
+                attribute.span,
+                "`src` / `:src` is only supported on the <img> intrinsic",
+            )),
+            ":object-fit" | ":loading" | ":fallback" => Err(syn::Error::new(
+                attribute.span,
+                format!(
+                    "{} is only supported on the <img> intrinsic",
+                    attribute.name
+                ),
+            )),
             "id" | ":id" => self.set_id(attribute),
             "key" => self.set_static_key(attribute),
             ":key" => self.set_bound_key(attribute),
             "focusable" => self.set_focusable(attribute),
+            "occlude" => self.set_occlude(attribute),
             "tab-index" | "tab_index" => self.set_tab_index(attribute),
+            ":track-focus" => self.set_track_focus(attribute),
+            "key-context" | ":key-context" => self.set_key_context(attribute),
             ":class" => self.set_dynamic_class(attribute),
-            name if name.starts_with('@') || name.starts_with("on:") => self.set_event(attribute),
+            ":style" => self.set_inline_style(attribute),
+            "v-text" => self.set_text_content(attribute, is_image, source_index),
+            ":drag-payload" => self.set_drag_payload(attribute, source_index),
+            ":drag-preview" => self.set_drag_preview(attribute, source_index),
+            ":can-drop" => self.set_can_drop(attribute, source_index),
+            ":drag-over" => self.push_drag_over(attribute, source_index),
+            name if name.starts_with('@') || name.starts_with("on:") => {
+                self.set_event(attribute, source_index)
+            }
             unknown => Err(syn::Error::new(
                 attribute.span,
                 format!("unsupported attribute `{unknown}`"),
             )),
         }
+    }
+
+    /// Stores one native child expression for the intrinsic-only `v-text` lane.
+    fn set_text_content(
+        &mut self,
+        attribute: &Attribute,
+        is_image: bool,
+        source_index: usize,
+    ) -> Result<()> {
+        if is_image {
+            return Err(syn::Error::new(
+                attribute.span,
+                "v-text requires a parent intrinsic and cannot be used on <img>",
+            ));
+        }
+        if self.text_content.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate v-text directive",
+            ));
+        }
+        self.text_content = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, "v-text")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one typed payload used to initiate a native drag.
+    fn set_drag_payload(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.drag_payload.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :drag-payload binding; a host can initiate only one native drag",
+            ));
+        }
+        self.drag_payload = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":drag-payload")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one entity constructor paired with `:drag-payload`.
+    fn set_drag_preview(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.drag_preview.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :drag-preview binding; a host can render only one native drag preview",
+            ));
+        }
+        self.drag_preview = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":drag-preview")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one type-erased predicate used by all typed drop lanes.
+    fn set_can_drop(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.can_drop.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :can-drop binding; a host has one native drop predicate",
+            ));
+        }
+        self.can_drop = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":can-drop")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Adds one exact-payload-type native drag-over style lane.
+    fn push_drag_over(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        self.drag_over.push(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":drag-over")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
     }
 
     /// Stores a compile-time class literal.
@@ -766,6 +1057,82 @@ impl ElementBindings {
         let expression = expect_attribute_expression(attribute, ":class")?;
         self.dynamic_class = Some(DynamicClassBinding {
             expression,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores one typed `StyleRefinement -> StyleRefinement` callback.
+    fn set_inline_style(&mut self, attribute: &Attribute) -> Result<()> {
+        if self.inline_style.is_some() {
+            return Err(syn::Error::new(attribute.span, "duplicate :style binding"));
+        }
+        self.inline_style = Some(expect_attribute_expression(attribute, ":style")?);
+        Ok(())
+    }
+
+    /// Stores the static or dynamically bound source of an `<img>` host.
+    fn set_image_source(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.image_source.is_some() {
+            return Err(syn::Error::new(attribute.span, "duplicate image source"));
+        }
+        let tokens = if attribute.name == ":src" {
+            let expression = expect_bound_expression(attribute, "src")?;
+            quote!(#expression)
+        } else {
+            value_tokens(attribute)?
+        };
+        self.image_source = Some(OrderedTokens {
+            tokens,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one typed GPUI object-fit policy on an `<img>` host.
+    fn set_image_object_fit(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.image_object_fit.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :object-fit binding",
+            ));
+        }
+        self.image_object_fit = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":object-fit")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one lazy GPUI loading view on an `<img>` host.
+    fn set_image_loading(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.image_loading.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :loading binding",
+            ));
+        }
+        self.image_loading = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":loading")?,
+            source_index,
+            span: attribute.span,
+        });
+        Ok(())
+    }
+
+    /// Stores the one lazy GPUI error view on an `<img>` host.
+    fn set_image_fallback(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        if self.image_fallback.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :fallback binding",
+            ));
+        }
+        self.image_fallback = Some(OrderedExpression {
+            expression: expect_attribute_expression(attribute, ":fallback")?,
+            source_index,
             span: attribute.span,
         });
         Ok(())
@@ -823,6 +1190,24 @@ impl ElementBindings {
         Ok(())
     }
 
+    /// Enables native pointer occlusion on this intrinsic host.
+    fn set_occlude(&mut self, attribute: &Attribute) -> Result<()> {
+        if self.occlude {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate occlude attribute",
+            ));
+        }
+        if attribute.value.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "occlude is a boolean attribute and takes no value",
+            ));
+        }
+        self.occlude = true;
+        Ok(())
+    }
+
     /// Stores an explicit keyboard tab index.
     fn set_tab_index(&mut self, attribute: &Attribute) -> Result<()> {
         if self.tab_index.is_some() {
@@ -835,14 +1220,75 @@ impl ElementBindings {
         Ok(())
     }
 
-    /// Parses the single currently supported host event.
-    fn set_event(&mut self, attribute: &Attribute) -> Result<()> {
-        let event = EventBinding::parse(attribute)?;
-        if self.click.is_some() {
-            return Err(syn::Error::new(attribute.span, "duplicate click handler"));
+    /// Stores the exact native focus-handle reference expression.
+    fn set_track_focus(&mut self, attribute: &Attribute) -> Result<()> {
+        if self.track_focus.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate :track-focus binding",
+            ));
         }
-        self.click = Some(event);
+        self.track_focus = Some(expect_attribute_expression(attribute, ":track-focus")?);
         Ok(())
+    }
+
+    /// Stores a static or dynamic GPUI keyboard context.
+    fn set_key_context(&mut self, attribute: &Attribute) -> Result<()> {
+        if self.key_context.is_some() {
+            return Err(syn::Error::new(
+                attribute.span,
+                "duplicate key-context binding",
+            ));
+        }
+        self.key_context = Some(if attribute.name == ":key-context" {
+            let expression = expect_attribute_expression(attribute, ":key-context")?;
+            quote!(#expression)
+        } else {
+            match &attribute.value {
+                Some(AttributeValue::String(value)) => quote!(#value),
+                _ => {
+                    return Err(syn::Error::new(
+                        attribute.span,
+                        "key-context must be a static string literal; use :key-context={...} for a Rust expression",
+                    ));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Parses one native host event and rejects duplicate event kinds.
+    fn set_event(&mut self, attribute: &Attribute, source_index: usize) -> Result<()> {
+        let event = EventBinding::parse(attribute, source_index)?;
+        if self
+            .events
+            .iter()
+            .any(|existing| existing.kind == event.kind)
+            && !event.kind.allows_multiple()
+        {
+            return Err(syn::Error::new(
+                attribute.span,
+                format!("duplicate {} handler", event.kind.diagnostic_name()),
+            ));
+        }
+        if event.kind.requires_focus() {
+            self.focusable = true;
+        }
+        self.events.push(event);
+        Ok(())
+    }
+
+    /// Reports whether this host needs source-ordered interaction/content lowering.
+    fn has_ordered_host_bindings(&self) -> bool {
+        self.text_content.is_some()
+            || self.drag_payload.is_some()
+            || self.drag_preview.is_some()
+            || self.can_drop.is_some()
+            || !self.drag_over.is_empty()
+            || self
+                .events
+                .iter()
+                .any(|event| matches!(event.kind, EventKind::DragMove | EventKind::Drop))
     }
 }
 
@@ -865,6 +1311,7 @@ impl ComponentBindings {
         let mut events = Vec::new();
         let mut seen_events = Vec::new();
         for attribute in &element.attributes {
+            Self::reject_intrinsic_only_directive(attribute)?;
             match attribute.name.as_str() {
                 ":props" => {
                     if complete_props.is_some() {
@@ -949,6 +1396,17 @@ impl ComponentBindings {
             key,
             events,
         })
+    }
+
+    /// Rejects bindings whose semantics require a real GPUI parent intrinsic.
+    fn reject_intrinsic_only_directive(attribute: &Attribute) -> Result<()> {
+        if attribute.name == "v-text" {
+            return Err(syn::Error::new(
+                attribute.span,
+                "v-text is available only on parent intrinsics, not PascalCase components",
+            ));
+        }
+        Ok(())
     }
 
     /// Classifies component children into one implicit default and named providers.
@@ -1165,6 +1623,12 @@ impl SlotOutletBinding {
         let mut props = None;
         for attribute in &element.attributes {
             match attribute.name.as_str() {
+                "v-text" => {
+                    return Err(syn::Error::new(
+                        attribute.span,
+                        "v-text requires a parent intrinsic and cannot be used on <slot>",
+                    ));
+                }
                 "name" => {
                     if source_name.is_some() {
                         return Err(syn::Error::new(
@@ -1500,8 +1964,8 @@ fn single_block_expression(block: &syn::Block) -> Result<&Expr> {
 }
 
 impl EventBinding {
-    /// Parses a click event and validates its Vue modifier subset.
-    fn parse(attribute: &Attribute) -> Result<Self> {
+    /// Parses one intrinsic event and validates its event-specific modifiers.
+    fn parse(attribute: &Attribute, source_index: usize) -> Result<Self> {
         let event_with_modifiers = attribute
             .name
             .strip_prefix('@')
@@ -1509,32 +1973,31 @@ impl EventBinding {
             .ok_or_else(|| syn::Error::new(attribute.span, "invalid event binding"))?;
         let mut parts = event_with_modifiers.split('.');
         let event = parts.next().unwrap_or_default();
-        if event != "click" {
-            return Err(syn::Error::new(
-                attribute.span,
-                format!("unsupported event `{event}`; the current GPUI host supports @click"),
-            ));
-        }
-
-        let mut modifiers = Vec::new();
-        for name in parts {
-            let modifier = EventModifier::parse(name, attribute.span)?;
-            if modifiers.contains(&modifier) {
-                return Err(syn::Error::new(
-                    attribute.span,
-                    format!("duplicate event modifier `.{name}`"),
-                ));
-            }
-            modifiers.push(modifier);
-        }
+        let modifier_names = parts.collect::<Vec<_>>();
+        let (kind, modifiers) = EventKind::parse(event, &modifier_names, attribute.span)?;
+        let handler_label = format!("{event} handler");
         Ok(Self {
-            handler: expect_attribute_expression(attribute, "click handler")?,
+            kind,
+            handler: expect_attribute_expression(attribute, &handler_label)?,
             modifiers,
+            source_index,
+            span: attribute.span,
         })
     }
 
+    /// Rejects modifiers on native events whose GPUI listener has no modifier lane.
+    fn reject_modifiers(event: &str, modifiers: &[&str], span: Span) -> Result<()> {
+        if let Some(modifier) = modifiers.first() {
+            return Err(syn::Error::new(
+                span,
+                format!("@{event} does not support modifier `.{modifier}`"),
+            ));
+        }
+        Ok(())
+    }
+
     /// Emits either the original listener or a zero-allocation modifier wrapper.
-    fn listener_tokens(&self) -> TokenStream {
+    fn listener_tokens(&self, crate_path: &TokenStream) -> TokenStream {
         let handler = &self.handler;
         if self.modifiers.is_empty() {
             return quote!(#handler);
@@ -1545,8 +2008,12 @@ impl EventBinding {
             .iter()
             .map(|modifier| modifier.statement(&self.modifiers));
         quote!({
-            let __gpui_vue_handler = #handler;
-            move |__gpui_vue_event, __gpui_vue_window, __gpui_vue_cx| {
+            let __gpui_vue_handler = #crate_path::ui::type_click_handler(#handler);
+            move |
+                __gpui_vue_event: &#crate_path::gpui::ClickEvent,
+                __gpui_vue_window: &mut #crate_path::gpui::Window,
+                __gpui_vue_cx: &mut #crate_path::gpui::App,
+            | {
                 #(#statements)*
                 (__gpui_vue_handler)(
                     __gpui_vue_event,
@@ -1555,6 +2022,207 @@ impl EventBinding {
                 );
             }
         })
+    }
+
+    /// Appends this listener through its exact native GPUI builder method.
+    fn apply(&self, target: &TokenStream, crate_path: &TokenStream) -> TokenStream {
+        let listener = self.listener_tokens(crate_path);
+        match self.kind {
+            EventKind::Click => quote!(#target.on_click(#listener)),
+            EventKind::KeyDown => quote!(#target.on_key_down(#listener)),
+            EventKind::KeyUp => quote!(#target.on_key_up(#listener)),
+            EventKind::ModifiersChanged => quote!(#target.on_modifiers_changed(#listener)),
+            EventKind::MouseDown(button) => {
+                let button = button.tokens(crate_path);
+                quote!(#target.on_mouse_down(#button, #listener))
+            }
+            EventKind::MouseDownOut(button) => {
+                let button = button.tokens(crate_path);
+                let handler = &self.handler;
+                quote!(#target.on_mouse_down_out({
+                    let __gpui_vue_handler =
+                        #crate_path::ui::type_mouse_down_handler(#handler);
+                    move |
+                        __gpui_vue_event: &#crate_path::gpui::MouseDownEvent,
+                        __gpui_vue_window: &mut #crate_path::gpui::Window,
+                        __gpui_vue_cx: &mut #crate_path::gpui::App,
+                    | {
+                        if __gpui_vue_event.button == #button {
+                            (__gpui_vue_handler)(
+                                __gpui_vue_event,
+                                __gpui_vue_window,
+                                __gpui_vue_cx,
+                            );
+                        }
+                    }
+                }))
+            }
+            EventKind::MouseMove => quote!(#target.on_mouse_move(#listener)),
+            EventKind::DragMove => quote!(#target.on_drag_move(#listener)),
+            EventKind::MouseUp(button) => {
+                let button = button.tokens(crate_path);
+                quote!(#target.on_mouse_up(#button, #listener))
+            }
+            EventKind::MouseUpOut(button) => {
+                let button = button.tokens(crate_path);
+                quote!(#target.on_mouse_up_out(#button, #listener))
+            }
+            EventKind::Pinch => quote!(#target.on_pinch(#listener)),
+            EventKind::ScrollWheel => quote!(#target.on_scroll_wheel(#listener)),
+            EventKind::Hover => quote!(#target.on_hover(#listener)),
+            EventKind::Drop => quote!(#target.on_drop(#listener)),
+            EventKind::Focus => {
+                let handler = &self.handler;
+                quote!({
+                    let __gpui_vue_element = #target;
+                    __gpui_vue_on_focus = ::core::option::Option::Some(
+                        #crate_path::ui::boxed_focus_handler(#handler),
+                    );
+                    __gpui_vue_element
+                })
+            }
+            EventKind::Blur => {
+                let handler = &self.handler;
+                quote!({
+                    let __gpui_vue_element = #target;
+                    __gpui_vue_on_blur = ::core::option::Option::Some(
+                        #crate_path::ui::boxed_focus_handler(#handler),
+                    );
+                    __gpui_vue_element
+                })
+            }
+        }
+    }
+}
+
+impl EventKind {
+    /// Parses one canonical native event plus its event-specific modifiers.
+    fn parse(
+        event: &str,
+        modifier_names: &[&str],
+        span: Span,
+    ) -> Result<(Self, Vec<EventModifier>)> {
+        let no_modifiers = |kind| {
+            EventBinding::reject_modifiers(event, modifier_names, span)?;
+            Ok((kind, Vec::new()))
+        };
+        let button = || MouseButtonBinding::parse(event, modifier_names, span);
+        match event {
+            "click" => {
+                let mut modifiers = Vec::new();
+                for name in modifier_names {
+                    let modifier = EventModifier::parse(name, span)?;
+                    if modifiers.contains(&modifier) {
+                        return Err(syn::Error::new(
+                            span,
+                            format!("duplicate event modifier `.{name}`"),
+                        ));
+                    }
+                    modifiers.push(modifier);
+                }
+                Ok((Self::Click, modifiers))
+            }
+            "key-down" => no_modifiers(Self::KeyDown),
+            "key-up" => no_modifiers(Self::KeyUp),
+            "modifiers-changed" => no_modifiers(Self::ModifiersChanged),
+            "mouse-down" => Ok((Self::MouseDown(button()?), Vec::new())),
+            "mouse-down-out" => Ok((Self::MouseDownOut(button()?), Vec::new())),
+            "mouse-move" => no_modifiers(Self::MouseMove),
+            "drag-move" => no_modifiers(Self::DragMove),
+            "mouse-up" => Ok((Self::MouseUp(button()?), Vec::new())),
+            "mouse-up-out" => Ok((Self::MouseUpOut(button()?), Vec::new())),
+            "pinch" => no_modifiers(Self::Pinch),
+            "scroll-wheel" => no_modifiers(Self::ScrollWheel),
+            "hover" => no_modifiers(Self::Hover),
+            "drop" => no_modifiers(Self::Drop),
+            "focus" => no_modifiers(Self::Focus),
+            "blur" => no_modifiers(Self::Blur),
+            unsupported => Err(syn::Error::new(
+                span,
+                format!(
+                    "unsupported event `{unsupported}`; supported intrinsic events: click, key-down, key-up, modifiers-changed, mouse-down, mouse-down-out, mouse-move, drag-move, mouse-up, mouse-up-out, pinch, scroll-wheel, hover, drop, focus, blur"
+                ),
+            )),
+        }
+    }
+
+    /// Returns the fully qualified event name used by duplicate diagnostics.
+    const fn diagnostic_name(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::KeyDown => "key-down",
+            Self::KeyUp => "key-up",
+            Self::ModifiersChanged => "modifiers-changed",
+            Self::MouseDown(MouseButtonBinding::Left) => "mouse-down.left",
+            Self::MouseDown(MouseButtonBinding::Right) => "mouse-down.right",
+            Self::MouseDown(MouseButtonBinding::Middle) => "mouse-down.middle",
+            Self::MouseDownOut(MouseButtonBinding::Left) => "mouse-down-out.left",
+            Self::MouseDownOut(MouseButtonBinding::Right) => "mouse-down-out.right",
+            Self::MouseDownOut(MouseButtonBinding::Middle) => "mouse-down-out.middle",
+            Self::MouseMove => "mouse-move",
+            Self::DragMove => "drag-move",
+            Self::MouseUp(MouseButtonBinding::Left) => "mouse-up.left",
+            Self::MouseUp(MouseButtonBinding::Right) => "mouse-up.right",
+            Self::MouseUp(MouseButtonBinding::Middle) => "mouse-up.middle",
+            Self::MouseUpOut(MouseButtonBinding::Left) => "mouse-up-out.left",
+            Self::MouseUpOut(MouseButtonBinding::Right) => "mouse-up-out.right",
+            Self::MouseUpOut(MouseButtonBinding::Middle) => "mouse-up-out.middle",
+            Self::Pinch => "pinch",
+            Self::ScrollWheel => "scroll-wheel",
+            Self::Hover => "hover",
+            Self::Drop => "drop",
+            Self::Focus => "focus",
+            Self::Blur => "blur",
+        }
+    }
+
+    /// Reports whether the host must enter GPUI's focus dispatch path.
+    const fn requires_focus(self) -> bool {
+        matches!(self, Self::KeyDown | Self::KeyUp | Self::ModifiersChanged)
+    }
+
+    /// Reports whether GPUI retains independent exact-payload-type lanes.
+    const fn allows_multiple(self) -> bool {
+        matches!(self, Self::DragMove | Self::Drop)
+    }
+
+    /// Reports whether this event uses gpui-vue's exact-focus subscription bridge.
+    const fn is_focus_lifecycle(self) -> bool {
+        matches!(self, Self::Focus | Self::Blur)
+    }
+}
+
+impl MouseButtonBinding {
+    /// Parses the one mandatory mouse-button modifier for button-filtered events.
+    fn parse(event: &str, modifiers: &[&str], span: Span) -> Result<Self> {
+        if modifiers.len() != 1 {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "@{event} requires exactly one mouse button modifier: .left, .right, or .middle"
+                ),
+            ));
+        }
+        match modifiers[0] {
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "middle" => Ok(Self::Middle),
+            unsupported => Err(syn::Error::new(
+                span,
+                format!(
+                    "unsupported @{event} modifier `.{unsupported}`; expected .left, .right, or .middle"
+                ),
+            )),
+        }
+    }
+
+    /// Emits one fully qualified native GPUI mouse-button value.
+    fn tokens(self, crate_path: &TokenStream) -> TokenStream {
+        match self {
+            Self::Left => quote!(#crate_path::gpui::MouseButton::Left),
+            Self::Right => quote!(#crate_path::gpui::MouseButton::Right),
+            Self::Middle => quote!(#crate_path::gpui::MouseButton::Middle),
+        }
     }
 }
 
@@ -1734,21 +2402,12 @@ fn expand_element(
         return expand_component_element(element, crate_path, context);
     }
 
-    let tag = element.tag.to_string();
-    if tag == "slot" {
+    if element.tag == "slot" {
         return expand_root_slot_outlet(element, crate_path, context);
     }
-    if !matches!(tag.as_str(), "div" | "view" | "text" | "span" | "button") {
-        return Err(syn::Error::new(
-            element.tag.span(),
-            format!(
-                "unsupported intrinsic <{tag}>; use div/view/text/span/button, <template>, or insert a custom GPUI component with `{{ component }}`"
-            ),
-        ));
-    }
-
-    let is_button = tag == "button";
-    let mut bindings = ElementBindings::parse(element, is_button)?;
+    let (is_button, is_image) = intrinsic_kind(element)?;
+    let mut bindings = ElementBindings::parse(element, is_button, is_image)?;
+    validate_image_source(element, &bindings, is_image)?;
     let classes = bindings
         .class
         .as_ref()
@@ -1782,7 +2441,16 @@ fn expand_element(
     } else {
         None
     };
-    let mut output = quote!(#crate_path::gpui::div());
+    let has_focus_lifecycle = bindings
+        .events
+        .iter()
+        .any(|event| event.kind.is_focus_lifecycle());
+    let focus_handle_local = has_focus_lifecycle.then(|| quote!(__gpui_vue_focus_handle));
+    let (mut output, image_value_bindings) = if is_image {
+        image_intrinsic_output(&bindings, crate_path)
+    } else {
+        (quote!(#crate_path::gpui::div()), Vec::new())
+    };
     if is_button {
         output = quote!(#output.cursor_pointer());
     }
@@ -1795,6 +2463,7 @@ fn expand_element(
         unconditional_classes,
         dynamic_classes.as_ref(),
         is_button,
+        focus_handle_local.as_ref(),
         crate_path,
     );
     if let Some(show) = &element.directive_show {
@@ -1802,7 +2471,138 @@ fn expand_element(
             __gpui_vue_element.hidden()
         }));
     }
-    append_nodes(output, &element.children, crate_path, context)
+    if !is_image {
+        output = append_nodes(output, &element.children, crate_path, context)?;
+    }
+    if has_focus_lifecycle {
+        let track_focus = bindings
+            .track_focus
+            .as_ref()
+            .expect("focus lifecycle validation requires :track-focus");
+        let focus_binding = focus_handler_binding(&bindings, EventKind::Focus, crate_path);
+        let blur_binding = focus_handler_binding(&bindings, EventKind::Blur, crate_path);
+        output = apply_focus_lifecycle(&output, crate_path);
+        output = quote!({
+            let __gpui_vue_focus_handle = #track_focus;
+            #focus_binding
+            #blur_binding
+            #output
+        });
+    }
+    if is_image {
+        output = quote!({
+            #(#image_value_bindings)*
+            #output
+        });
+    }
+    Ok(output)
+}
+
+/// Requires one source on the native image intrinsic.
+fn validate_image_source(
+    element: &Element,
+    bindings: &ElementBindings,
+    is_image: bool,
+) -> Result<()> {
+    if is_image && bindings.image_source.is_none() {
+        return Err(syn::Error::new(
+            element.tag.span(),
+            "the <img> intrinsic requires `src` or `:src`",
+        ));
+    }
+    Ok(())
+}
+
+/// Builds one typed GPUI image and source-ordered locals for its attributes.
+fn image_intrinsic_output(
+    bindings: &ElementBindings,
+    crate_path: &TokenStream,
+) -> (TokenStream, Vec<TokenStream>) {
+    let ordinal = bindings.element_ordinal;
+    let source_local = format_ident!(
+        "__gpui_vue_image_source_{ordinal}",
+        span = Span::mixed_site()
+    );
+    let fit_local = format_ident!("__gpui_vue_image_fit_{ordinal}", span = Span::mixed_site());
+    let loading_local = format_ident!(
+        "__gpui_vue_image_loading_{ordinal}",
+        span = Span::mixed_site()
+    );
+    let fallback_local = format_ident!(
+        "__gpui_vue_image_fallback_{ordinal}",
+        span = Span::mixed_site()
+    );
+    let source = bindings
+        .image_source
+        .as_ref()
+        .expect("image source validation runs before lowering");
+    let source_tokens = &source.tokens;
+    let mut statements = vec![(
+        source.source_index,
+        quote_spanned! {source.span=> let #source_local = #source_tokens; },
+    )];
+    for (binding, local) in [
+        (bindings.image_object_fit.as_ref(), &fit_local),
+        (bindings.image_loading.as_ref(), &loading_local),
+        (bindings.image_fallback.as_ref(), &fallback_local),
+    ] {
+        if let Some(binding) = binding {
+            let expression = &binding.expression;
+            statements.push((
+                binding.source_index,
+                quote_spanned! {binding.span=> let #local = #expression; },
+            ));
+        }
+    }
+    statements.sort_by_key(|(source_index, _)| *source_index);
+
+    let mut output = quote!(#crate_path::ui::image(#source_local));
+    if let Some(binding) = &bindings.image_object_fit {
+        output = quote_spanned! {binding.span=>
+            #crate_path::ui::image_object_fit(#output, #fit_local)
+        };
+    }
+    if let Some(binding) = &bindings.image_loading {
+        output = quote_spanned! {binding.span=>
+            #crate_path::ui::image_loading(#output, #loading_local)
+        };
+    }
+    if let Some(binding) = &bindings.image_fallback {
+        output = quote_spanned! {binding.span=>
+            #crate_path::ui::image_fallback(#output, #fallback_local)
+        };
+    }
+    (
+        output,
+        statements
+            .into_iter()
+            .map(|(_, statement)| statement)
+            .collect(),
+    )
+}
+
+/// Validates one intrinsic tag and reports its host-specific flags.
+fn intrinsic_kind(element: &Element) -> Result<(bool, bool)> {
+    let tag = element.tag.to_string();
+    if !matches!(
+        tag.as_str(),
+        "div" | "view" | "text" | "span" | "button" | "img"
+    ) {
+        return Err(syn::Error::new(
+            element.tag.span(),
+            format!(
+                "unsupported intrinsic <{tag}>; use div/view/text/span/button/img, <template>, or insert a custom GPUI component with `{{ component }}`"
+            ),
+        ));
+    }
+    let is_image = tag == "img";
+    if is_image && !element.children.is_empty() {
+        return Err(syn::Error::new(
+            element.tag.span(),
+            "the <img> intrinsic cannot have children",
+        ));
+    }
+    Ok((tag == "button", is_image))
 }
 
 /// Reports whether a simple Rust identifier uses the `PascalCase` component lane.
@@ -2087,8 +2887,15 @@ fn validate_element_identity(
 ) -> Result<()> {
     let class_needs_id = classes.is_some_and(CompiledClasses::needs_stateful_id);
     let dynamic_class_needs_id = dynamic_classes.is_some_and(DynamicClasses::needs_stateful_id);
-    let needs_id = bindings.click.is_some()
+    let needs_id = !bindings.events.is_empty()
+        || bindings.drag_payload.is_some()
+        || bindings.drag_preview.is_some()
+        || bindings.can_drop.is_some()
+        || !bindings.drag_over.is_empty()
+        || bindings.track_focus.is_some()
+        || bindings.key_context.is_some()
         || bindings.focusable
+        || bindings.occlude
         || bindings.tab_index.is_some()
         || class_needs_id
         || dynamic_class_needs_id;
@@ -2108,10 +2915,19 @@ fn apply_interactivity(
     classes: Option<&CompiledClasses>,
     dynamic_classes: Option<&DynamicClasses>,
     is_button: bool,
+    focus_handle_override: Option<&TokenStream>,
     crate_path: &TokenStream,
 ) -> TokenStream {
     if let Some(element_id) = bindings.key.as_ref().or(bindings.id.as_ref()) {
         output = quote!(#output.id(#element_id));
+    }
+    if bindings.occlude {
+        output = quote!(#output.occlude());
+    }
+    if let Some(track_focus) = focus_handle_override {
+        output = quote!(#output.track_focus(#track_focus));
+    } else if let Some(track_focus) = &bindings.track_focus {
+        output = quote!(#output.track_focus(#track_focus));
     }
     if let Some(tab_index) = &bindings.tab_index {
         output = quote!(#output.tab_index(#tab_index));
@@ -2120,17 +2936,228 @@ fn apply_interactivity(
     } else if bindings.focusable {
         output = quote!(#output.focusable());
     }
+    if let Some(key_context) = &bindings.key_context {
+        output = quote!(#output.key_context(#key_context));
+    }
     if let Some(classes) = classes {
         output = classes.apply_variants(output, crate_path);
     }
     if let Some(dynamic_classes) = dynamic_classes {
         output = dynamic_classes.apply(&output, crate_path);
     }
-    if let Some(click) = &bindings.click {
-        let listener = click.listener_tokens();
-        output = quote!(#output.on_click(#listener));
+    if let Some(inline_style) = &bindings.inline_style {
+        output = quote_spanned! {inline_style.span()=>
+            #crate_path::ui::apply_style_refinement(#output, #inline_style)
+        };
+    }
+    if bindings.has_ordered_host_bindings() {
+        output = apply_host_bindings_in_source_order(&output, bindings, crate_path);
+    } else {
+        for event in &bindings.events {
+            output = event.apply(&output, crate_path);
+        }
     }
     output
+}
+
+/// Lowers interactions and `v-text` without regrouping source expressions.
+///
+/// GPUI exposes a single drag source and predicate but repeated typed move,
+/// drop, and drag-over lanes. Keeping each source expression at its original
+/// attribute position preserves Rust move semantics and observable evaluation
+/// order even when the payload and preview attributes are separated.
+fn apply_host_bindings_in_source_order(
+    output: &TokenStream,
+    bindings: &ElementBindings,
+    crate_path: &TokenStream,
+) -> TokenStream {
+    let element_ordinal = bindings.element_ordinal;
+    let mut interactions = Vec::with_capacity(
+        bindings.events.len()
+            + bindings.drag_over.len()
+            + usize::from(bindings.drag_payload.is_some())
+            + usize::from(bindings.drag_preview.is_some())
+            + usize::from(bindings.can_drop.is_some())
+            + usize::from(bindings.text_content.is_some()),
+    );
+    interactions.extend(bindings.events.iter().map(OrderedHostInteraction::Event));
+    if let Some(payload) = &bindings.drag_payload {
+        interactions.push(OrderedHostInteraction::DragPayload(payload));
+    }
+    if let Some(preview) = &bindings.drag_preview {
+        interactions.push(OrderedHostInteraction::DragPreview(preview));
+    }
+    if let Some(can_drop) = &bindings.can_drop {
+        interactions.push(OrderedHostInteraction::CanDrop(can_drop));
+    }
+    interactions.extend(
+        bindings
+            .drag_over
+            .iter()
+            .map(OrderedHostInteraction::DragOver),
+    );
+    if let Some(text) = &bindings.text_content {
+        interactions.push(OrderedHostInteraction::Text(text));
+    }
+    interactions.sort_by_key(OrderedHostInteraction::source_index);
+
+    let element = format_ident!(
+        "__gpui_vue_drag_host_{element_ordinal}",
+        span = Span::mixed_site()
+    );
+    let payload_local = format_ident!(
+        "__gpui_vue_drag_payload_{element_ordinal}",
+        span = Span::mixed_site()
+    );
+    let preview_local = format_ident!(
+        "__gpui_vue_drag_preview_{element_ordinal}",
+        span = Span::mixed_site()
+    );
+    let text_local = format_ident!(
+        "__gpui_vue_v_text_{element_ordinal}",
+        span = Span::mixed_site()
+    );
+    let drag_source_completion_index = drag_source_completion_index(bindings);
+    let statements = interactions
+        .iter()
+        .map(|interaction| {
+            host_interaction_tokens(
+                interaction,
+                &element,
+                &payload_local,
+                &preview_local,
+                &text_local,
+                drag_source_completion_index,
+                crate_path,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    quote!({
+        let mut #element = #output;
+        #(#statements)*
+        #element
+    })
+}
+
+/// Finds the source position where both halves of one drag source are available.
+fn drag_source_completion_index(bindings: &ElementBindings) -> Option<usize> {
+    bindings
+        .drag_payload
+        .as_ref()
+        .zip(bindings.drag_preview.as_ref())
+        .map(|(payload, preview)| payload.source_index.max(preview.source_index))
+}
+
+/// Emits one source-positioned intrinsic interaction or content binding.
+fn host_interaction_tokens(
+    interaction: &OrderedHostInteraction<'_>,
+    element: &Ident,
+    payload_local: &Ident,
+    preview_local: &Ident,
+    text_local: &Ident,
+    drag_source_completion_index: Option<usize>,
+    crate_path: &TokenStream,
+) -> TokenStream {
+    match interaction {
+        OrderedHostInteraction::Event(event) => {
+            let applied = event.apply(&quote!(#element), crate_path);
+            quote_spanned! {event.span=> #element = #applied; }
+        }
+        OrderedHostInteraction::DragPayload(binding) => {
+            let expression = &binding.expression;
+            let attach = attach_completed_drag_source(
+                binding,
+                element,
+                payload_local,
+                preview_local,
+                drag_source_completion_index,
+            );
+            quote_spanned! {binding.span=>
+                let #payload_local = #expression;
+                #attach
+            }
+        }
+        OrderedHostInteraction::DragPreview(binding) => {
+            let expression = &binding.expression;
+            let attach = attach_completed_drag_source(
+                binding,
+                element,
+                payload_local,
+                preview_local,
+                drag_source_completion_index,
+            );
+            quote_spanned! {binding.span=>
+                let #preview_local = #crate_path::ui::type_drag_preview(#expression);
+                #attach
+            }
+        }
+        OrderedHostInteraction::CanDrop(binding) => {
+            let expression = &binding.expression;
+            quote_spanned! {binding.span=> #element = #element.can_drop(#expression); }
+        }
+        OrderedHostInteraction::DragOver(binding) => {
+            let expression = &binding.expression;
+            quote_spanned! {binding.span=> #element = #element.drag_over(#expression); }
+        }
+        OrderedHostInteraction::Text(binding) => {
+            let expression = &binding.expression;
+            quote_spanned! {binding.span=>
+                let #text_local = #expression;
+                #element = #element.child(#text_local);
+            }
+        }
+    }
+}
+
+/// Attaches the one native drag source after its later expression is evaluated.
+fn attach_completed_drag_source(
+    binding: &OrderedExpression,
+    element: &Ident,
+    payload_local: &Ident,
+    preview_local: &Ident,
+    completion_index: Option<usize>,
+) -> TokenStream {
+    if completion_index == Some(binding.source_index) {
+        quote_spanned! {binding.span=>
+            #element = #element.on_drag(#payload_local, #preview_local);
+        }
+    } else {
+        TokenStream::new()
+    }
+}
+
+/// Declares one typed focus-handler slot, mutable only when source assigns it.
+fn focus_handler_binding(
+    bindings: &ElementBindings,
+    kind: EventKind,
+    crate_path: &TokenStream,
+) -> TokenStream {
+    let mutable = bindings.events.iter().any(|event| event.kind == kind);
+    let name = match kind {
+        EventKind::Focus => quote!(__gpui_vue_on_focus),
+        EventKind::Blur => quote!(__gpui_vue_on_blur),
+        _ => unreachable!("focus handler slots exist only for focus and blur"),
+    };
+    if mutable {
+        quote!(let mut #name: ::core::option::Option<
+            #crate_path::ui::FocusEventHandler
+        > = ::core::option::Option::None;)
+    } else {
+        quote!(let #name: ::core::option::Option<
+            #crate_path::ui::FocusEventHandler
+        > = ::core::option::Option::None;)
+    }
+}
+
+/// Wraps a completed native host with exact focus and blur subscriptions.
+fn apply_focus_lifecycle(output: &TokenStream, crate_path: &TokenStream) -> TokenStream {
+    quote!(#crate_path::ui::focus_events(
+        #output,
+        __gpui_vue_focus_handle,
+        __gpui_vue_on_focus,
+        __gpui_vue_on_blur,
+    ))
 }
 
 /// Quotes a required attribute value.
@@ -2330,6 +3357,16 @@ fn append_structural_template(
     crate_path: &TokenStream,
     context: Option<&ComponentTemplateContext>,
 ) -> Result<TokenStream> {
+    if let Some(attribute) = element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name == "v-text")
+    {
+        return Err(syn::Error::new(
+            attribute.span,
+            "v-text requires a parent intrinsic and cannot be used on <template>",
+        ));
+    }
     if !element.attributes.is_empty() {
         return Err(syn::Error::new(
             element.tag.span(),
@@ -2446,6 +3483,83 @@ mod tests {
     }
 
     #[test]
+    fn v_text_lowers_once_as_a_source_ordered_native_child() {
+        let expanded = expand(&quote! {
+            <div
+                id="status"
+                @hover={hover_factory()}
+                v-text={text_factory()}
+                @click={click_factory()}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        assert_eq!(expanded.matches("text_factory ()").count(), 1);
+        assert!(expanded.contains("child (__gpui_vue_v_text_0)"));
+        let hover = expanded.find("hover_factory ()").unwrap();
+        let text = expanded.find("text_factory ()").unwrap();
+        let click = expanded.find("click_factory ()").unwrap();
+        assert!(hover < text && text < click, "{expanded}");
+    }
+
+    #[test]
+    fn v_text_composes_with_existing_structural_and_identity_rules() {
+        let conditional = expand(&quote! {
+            <div v-if={ready} v-text={label} />
+        })
+        .expect("v-text should use the ordinary intrinsic conditional lane")
+        .to_string();
+        assert!(conditional.contains("when (ready"));
+        assert!(conditional.contains("child (__gpui_vue_v_text_0)"));
+
+        let looped = expand(&quote! {
+            <div v-for={item in items} :key={item.id} v-text={item.label} />
+        })
+        .expect("v-text should preserve keyed v-for identity")
+        .to_string();
+        assert!(looped.contains("into_iter () . map"));
+        assert!(looped.contains("item . label"));
+
+        let unkeyed = expand(&quote! {
+            <div v-for={item in items} v-text={item.label} />
+        })
+        .unwrap_err();
+        assert!(unkeyed.to_string().contains("dynamic `:key"));
+    }
+
+    #[test]
+    fn v_text_rejects_children_non_expressions_and_non_parent_hosts() {
+        let children = expand(&quote! {
+            <div v-text={label}>"existing child"</div>
+        })
+        .unwrap_err();
+        assert!(
+            children
+                .to_string()
+                .contains("cannot be used with children")
+        );
+
+        let literal = expand(&quote! { <span v-text="literal" /> }).unwrap_err();
+        assert!(literal.to_string().contains("must be a Rust expression"));
+
+        let duplicate = expand(&quote! {
+            <text v-text={first} v-text={second} />
+        })
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate v-text"));
+
+        for (source, target) in [
+            (quote!(<img src="icon.png" v-text={label} />), "<img>"),
+            (quote!(<template v-text={label} />), "<template>"),
+            (quote!(<Child v-text={label} />), "PascalCase components"),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains(target));
+        }
+    }
+
+    #[test]
     fn event_modifiers_are_ordered_and_dom_only_modifier_fails() {
         let expanded = expand(&quote!(
             <button id="save" @click.stop.prevent.ctrl.exact={handler}>"Save"</button>
@@ -2456,12 +3570,555 @@ mod tests {
         let prevent = expanded.find("prevent_default").unwrap();
         let control = expanded.find("modifiers () . control").unwrap();
         assert!(stop < prevent && prevent < control);
+        assert!(expanded.contains("ui :: type_click_handler"));
 
         let error = expand(&quote!(
             <button id="save" @click.passive={handler}>"Save"</button>
         ))
         .unwrap_err();
         assert!(error.to_string().contains("no GPUI equivalent"));
+    }
+
+    #[test]
+    fn focus_context_and_host_events_lower_in_native_builder_order() {
+        let expanded = expand(&quote! {
+            <div
+                id="workspace"
+                :track-focus={&focus}
+                key-context="KageEditor"
+                @key-down={key_down}
+                @mouse-down.left={mouse_down_left}
+                @mouse-down.right={mouse_down_right}
+                @mouse-move={mouse_move}
+                @mouse-up.middle={mouse_up}
+                @mouse-up-out.left={mouse_up_out}
+                @pinch={pinch}
+                @scroll-wheel={scroll}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        let identity = expanded.find("id (\"workspace\")").unwrap();
+        let track_focus = expanded.find("track_focus (& focus)").unwrap();
+        let key_context = expanded.find("key_context (\"KageEditor\")").unwrap();
+        let key_down = expanded.find("on_key_down (key_down)").unwrap();
+        assert!(identity < track_focus && track_focus < key_context && key_context < key_down);
+        assert!(expanded.contains("on_mouse_down (:: gpui_vue :: gpui :: MouseButton :: Left"));
+        assert!(expanded.contains("on_mouse_down (:: gpui_vue :: gpui :: MouseButton :: Right"));
+        assert!(expanded.contains("on_mouse_move (mouse_move)"));
+        assert!(expanded.contains("on_mouse_up (:: gpui_vue :: gpui :: MouseButton :: Middle"));
+        assert!(expanded.contains("on_mouse_up_out (:: gpui_vue :: gpui :: MouseButton :: Left"));
+        assert!(expanded.contains("on_pinch (pinch)"));
+        assert!(expanded.contains("on_scroll_wheel (scroll)"));
+        let pinch = expanded.find("on_pinch (pinch)").unwrap();
+        let scroll = expanded.find("on_scroll_wheel (scroll)").unwrap();
+        assert!(key_down < pinch && pinch < scroll);
+
+        let dynamic_context = expand(&quote! {
+            <div id="dynamic-context" :key-context={context} />
+        })
+        .unwrap()
+        .to_string();
+        assert!(dynamic_context.contains("key_context (context)"));
+    }
+
+    #[test]
+    fn extended_native_events_preserve_typed_routing_and_source_order() {
+        let expanded = expand(&quote! {
+            <div
+                id="extended-events"
+                :track-focus={&focus_handle}
+                @key-up={key_up}
+                on:modifiers-changed={modifiers_changed}
+                @mouse-down-out.left={left_out}
+                on:mouse-down-out.right={right_out}
+                @mouse-down-out.middle={middle_out}
+                @hover={hover}
+                @focus={focused}
+                on:blur={blurred}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        assert_eq!(expanded.matches("& focus_handle").count(), 1);
+        assert!(expanded.contains("on_key_up (key_up)"));
+        assert!(expanded.contains("on_modifiers_changed (modifiers_changed)"));
+        assert_eq!(expanded.matches("on_mouse_down_out").count(), 3);
+        assert!(expanded.contains("ui :: type_mouse_down_handler (left_out)"));
+        assert!(expanded.contains("MouseButton :: Left"));
+        assert!(expanded.contains("MouseButton :: Right"));
+        assert!(expanded.contains("MouseButton :: Middle"));
+        assert!(expanded.contains("on_hover (hover)"));
+        assert!(expanded.contains("ui :: boxed_focus_handler (focused)"));
+        assert!(expanded.contains("ui :: boxed_focus_handler (blurred)"));
+        assert!(expanded.contains("ui :: focus_events"));
+
+        let key_up = expanded.find("on_key_up (key_up)").unwrap();
+        let modifiers = expanded
+            .find("on_modifiers_changed (modifiers_changed)")
+            .unwrap();
+        let left_out = expanded.find("type_mouse_down_handler (left_out)").unwrap();
+        let right_out = expanded
+            .find("type_mouse_down_handler (right_out)")
+            .unwrap();
+        let middle_out = expanded
+            .find("type_mouse_down_handler (middle_out)")
+            .unwrap();
+        let hover = expanded.find("on_hover (hover)").unwrap();
+        let focused = expanded.find("boxed_focus_handler (focused)").unwrap();
+        let blurred = expanded.find("boxed_focus_handler (blurred)").unwrap();
+        assert!(
+            key_up < modifiers
+                && modifiers < left_out
+                && left_out < right_out
+                && right_out < middle_out
+                && middle_out < hover
+                && hover < focused
+                && focused < blurred
+        );
+    }
+
+    #[test]
+    fn drag_drop_bindings_lower_to_native_typed_lanes_in_source_order() {
+        let expanded = expand(&quote! {
+            <div
+                id="drag-surface"
+                :drag-preview={preview_factory()}
+                @drag-move={row_move_factory()}
+                :drag-payload={payload_factory()}
+                on:drag-move={tab_move_factory()}
+                :can-drop={predicate_factory()}
+                :drag-over={row_style_factory()}
+                @drop={row_drop_factory()}
+                :drag-over={file_style_factory()}
+                on:drop={file_drop_factory()}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(expanded.contains("ui :: type_drag_preview (preview_factory ())"));
+        assert!(expanded.contains("on_drag"));
+        assert_eq!(expanded.matches("on_drag_move").count(), 2);
+        assert_eq!(expanded.matches("drag_over").count(), 2);
+        assert_eq!(expanded.matches("on_drop").count(), 2);
+        for expression in [
+            "preview_factory ()",
+            "row_move_factory ()",
+            "payload_factory ()",
+            "tab_move_factory ()",
+            "predicate_factory ()",
+            "row_style_factory ()",
+            "row_drop_factory ()",
+            "file_style_factory ()",
+            "file_drop_factory ()",
+        ] {
+            assert_eq!(expanded.matches(expression).count(), 1, "{expanded}");
+        }
+
+        let identity = expanded.find("id (\"drag-surface\")").unwrap();
+        let preview = expanded.find("preview_factory ()").unwrap();
+        let row_move = expanded.find("row_move_factory ()").unwrap();
+        let payload = expanded.find("payload_factory ()").unwrap();
+        let drag_source = expanded.find(". on_drag (").unwrap();
+        let tab_move = expanded.find("tab_move_factory ()").unwrap();
+        let predicate = expanded.find("predicate_factory ()").unwrap();
+        let row_style = expanded.find("row_style_factory ()").unwrap();
+        let row_drop = expanded.find("row_drop_factory ()").unwrap();
+        let file_style = expanded.find("file_style_factory ()").unwrap();
+        let file_drop = expanded.find("file_drop_factory ()").unwrap();
+        assert!(
+            identity < preview
+                && preview < row_move
+                && row_move < payload
+                && payload < drag_source
+                && drag_source < tab_move
+                && tab_move < predicate
+                && predicate < row_style
+                && row_style < row_drop
+                && row_drop < file_style
+                && file_style < file_drop,
+            "{expanded}",
+        );
+    }
+
+    #[test]
+    fn drag_source_pair_and_single_native_lanes_are_diagnosed() {
+        let missing_preview = expand(&quote! {
+            <div id="source" :drag-payload={payload} />
+        })
+        .unwrap_err();
+        assert!(
+            missing_preview
+                .to_string()
+                .contains(":drag-payload requires a matching :drag-preview")
+        );
+
+        let missing_payload = expand(&quote! {
+            <div id="source" :drag-preview={preview} />
+        })
+        .unwrap_err();
+        assert!(
+            missing_payload
+                .to_string()
+                .contains(":drag-preview requires a matching :drag-payload")
+        );
+
+        for (source, diagnostic) in [
+            (
+                quote!(<div id="source" :drag-payload={first} :drag-payload={second} :drag-preview={preview} />),
+                "duplicate :drag-payload",
+            ),
+            (
+                quote!(<div id="source" :drag-payload={payload} :drag-preview={first} :drag-preview={second} />),
+                "duplicate :drag-preview",
+            ),
+            (
+                quote!(<div id="target" :can-drop={first} :can-drop={second} />),
+                "duplicate :can-drop",
+            ),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic));
+        }
+    }
+
+    #[test]
+    fn every_drag_drop_surface_requires_stable_identity_and_no_modifiers() {
+        for source in [
+            quote!(<div :drag-payload={payload} :drag-preview={preview} />),
+            quote!(<div @drag-move={moving} />),
+            quote!(<div :can-drop={predicate} />),
+            quote!(<div :drag-over={style} />),
+            quote!(<div @drop={dropped} />),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains("stable `id`"));
+        }
+
+        for (source, diagnostic) in [
+            (
+                quote!(<div id="move" @drag-move.stop={moving} />),
+                "@drag-move does not support modifier `.stop`",
+            ),
+            (
+                quote!(<div id="drop" on:drop.prevent={dropped} />),
+                "@drop does not support modifier `.prevent`",
+            ),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic));
+        }
+    }
+
+    #[test]
+    fn exact_focus_events_require_an_explicit_tracked_handle() {
+        for source in [
+            quote!(<div id="focus" @focus={focused} />),
+            quote!(<div id="blur" @blur={blurred} />),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains("requires :track-focus"));
+            assert!(error.to_string().contains("exact native focus handle"));
+        }
+    }
+
+    #[test]
+    fn host_binding_duplicates_and_stable_identity_are_diagnosed() {
+        let duplicate_focus = expand(&quote! {
+            <div id="focus" :track-focus={first} :track-focus={second} />
+        })
+        .unwrap_err();
+        assert!(
+            duplicate_focus
+                .to_string()
+                .contains("duplicate :track-focus")
+        );
+
+        let duplicate_context = expand(&quote! {
+            <div id="context" key-context="Static" :key-context={dynamic} />
+        })
+        .unwrap_err();
+        assert!(
+            duplicate_context
+                .to_string()
+                .contains("duplicate key-context")
+        );
+
+        let duplicate_event = expand(&quote! {
+            <div id="events" @mouse-down.left={first} on:mouse-down.left={second} />
+        })
+        .unwrap_err();
+        assert!(
+            duplicate_event
+                .to_string()
+                .contains("duplicate mouse-down.left handler")
+        );
+
+        let duplicate_pinch = expand(&quote! {
+            <div id="pinch" @pinch={first} on:pinch={second} />
+        })
+        .unwrap_err();
+        assert!(
+            duplicate_pinch
+                .to_string()
+                .contains("duplicate pinch handler")
+        );
+
+        for (source, diagnostic) in [
+            (
+                quote!(<div id="key-up" @key-up={first} on:key-up={second} />),
+                "duplicate key-up handler",
+            ),
+            (
+                quote!(<div id="modifiers" @modifiers-changed={first} on:modifiers-changed={second} />),
+                "duplicate modifiers-changed handler",
+            ),
+            (
+                quote!(<div id="down-out" @mouse-down-out.left={first} on:mouse-down-out.left={second} />),
+                "duplicate mouse-down-out.left handler",
+            ),
+            (
+                quote!(<div id="hover" @hover={first} on:hover={second} />),
+                "duplicate hover handler",
+            ),
+            (
+                quote!(<div id="focus-event" :track-focus={&focus} @focus={first} on:focus={second} />),
+                "duplicate focus handler",
+            ),
+            (
+                quote!(<div id="blur-event" :track-focus={&focus} @blur={first} on:blur={second} />),
+                "duplicate blur handler",
+            ),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic));
+        }
+
+        for source in [
+            quote!(<div :track-focus={&focus} />),
+            quote!(<div key-context="Editor" />),
+            quote!(<div @mouse-move={moving} />),
+            quote!(<div @pinch={pinching} />),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains("stable `id`"));
+        }
+    }
+
+    #[test]
+    fn occluding_hosts_require_identity_and_lower_after_it() {
+        let expanded = expand(&quote! {
+            <div id="modal-backdrop" occlude class="absolute inset-0" />
+        })
+        .unwrap()
+        .to_string();
+        let identity = expanded.find("id (\"modal-backdrop\")").unwrap();
+        let occlusion = expanded.find("occlude ()").unwrap();
+        assert!(identity < occlusion);
+
+        let missing_identity = expand(&quote! { <div occlude /> }).unwrap_err();
+        assert!(missing_identity.to_string().contains("stable `id`"));
+
+        let valued = expand(&quote! { <div id="modal" occlude={true} /> }).unwrap_err();
+        assert!(valued.to_string().contains("takes no value"));
+
+        let duplicate = expand(&quote! { <div id="modal" occlude occlude /> }).unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate occlude"));
+    }
+
+    #[test]
+    fn image_intrinsic_requires_one_source_and_remains_styleable() {
+        let expanded = expand(&quote! {
+            <img
+                id="preview"
+                :src={thumbnail_url()}
+                class="size-full rounded"
+                :style={runtime_style()}
+            />
+        })
+        .unwrap()
+        .to_string();
+        assert_eq!(expanded.matches("thumbnail_url ()").count(), 1);
+        assert!(expanded.contains("let __gpui_vue_image_source_0 = thumbnail_url ()"));
+        assert!(expanded.contains("ui :: image (__gpui_vue_image_source_0)"));
+        assert!(expanded.contains("id (\"preview\")"));
+        assert!(expanded.contains("apply_style_refinement"));
+
+        let static_source = expand(&quote! {
+            <img src="icons/editor.png" class="w-8 h-8" />
+        })
+        .unwrap()
+        .to_string();
+        assert!(static_source.contains("let __gpui_vue_image_source_0 = \"icons/editor.png\""));
+        assert!(static_source.contains("ui :: image (__gpui_vue_image_source_0)"));
+
+        let shorthand = expand(&quote! { <img :src /> }).unwrap().to_string();
+        assert!(shorthand.contains("let __gpui_vue_image_source_0 = src"));
+
+        let missing = expand(&quote! { <img class="w-8" /> }).unwrap_err();
+        assert!(missing.to_string().contains("requires `src` or `:src`"));
+
+        let children = expand(&quote! { <img src="icon.png">"invalid"</img> }).unwrap_err();
+        assert!(children.to_string().contains("cannot have children"));
+
+        let duplicate = expand(&quote! { <img src="one.png" :src={second} /> }).unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate image source"));
+    }
+
+    #[test]
+    fn image_specific_bindings_are_typed_once_and_evaluated_in_source_order() {
+        let expanded = expand(&quote! {
+            <img
+                :loading={loading_factory()}
+                :src={source_factory()}
+                :fallback={fallback_factory()}
+                :object-fit={fit_factory()}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        for expression in [
+            "loading_factory ()",
+            "source_factory ()",
+            "fallback_factory ()",
+            "fit_factory ()",
+        ] {
+            assert_eq!(expanded.matches(expression).count(), 1, "{expanded}");
+        }
+        let loading = expanded.find("loading_factory ()").unwrap();
+        let source = expanded.find("source_factory ()").unwrap();
+        let fallback = expanded.find("fallback_factory ()").unwrap();
+        let fit = expanded.find("fit_factory ()").unwrap();
+        assert!(
+            loading < source && source < fallback && fallback < fit,
+            "{expanded}"
+        );
+        assert!(expanded.contains("ui :: image_object_fit"));
+        assert!(expanded.contains("ui :: image_loading"));
+        assert!(expanded.contains("ui :: image_fallback"));
+        assert!(
+            !expanded.contains(". id ("),
+            "image states do not require identity"
+        );
+    }
+
+    #[test]
+    fn image_specific_bindings_reject_duplicates_non_images_and_dom_strings() {
+        for (source, diagnostic) in [
+            (
+                quote!(<img src="one.png" :object-fit={first} :object-fit={second} />),
+                "duplicate :object-fit binding",
+            ),
+            (
+                quote!(<img src="one.png" :loading={first} :loading={second} />),
+                "duplicate :loading binding",
+            ),
+            (
+                quote!(<img src="one.png" :fallback={first} :fallback={second} />),
+                "duplicate :fallback binding",
+            ),
+            (
+                quote!(<div :object-fit={fit} />),
+                ":object-fit is only supported on the <img> intrinsic",
+            ),
+            (
+                quote!(<div :loading={loading} />),
+                ":loading is only supported on the <img> intrinsic",
+            ),
+            (
+                quote!(<div :fallback={fallback} />),
+                ":fallback is only supported on the <img> intrinsic",
+            ),
+            (
+                quote!(<img src="one.png" object-fit="cover" />),
+                "unsupported attribute `object-fit`",
+            ),
+            (
+                quote!(<img src="one.png" :object-fit="cover" />),
+                ":object-fit must be a Rust expression",
+            ),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{error}");
+        }
+    }
+
+    #[test]
+    fn mouse_buttons_are_mandatory_and_event_modifiers_are_scoped() {
+        for source in [
+            quote!(<div id="down" @mouse-down={handler} />),
+            quote!(<div id="down-out" @mouse-down-out={handler} />),
+            quote!(<div id="up" @mouse-up={handler} />),
+            quote!(<div id="out" @mouse-up-out={handler} />),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("requires exactly one mouse button")
+            );
+        }
+
+        let multiple = expand(&quote! {
+            <div id="multiple" @mouse-down.left.right={handler} />
+        })
+        .unwrap_err();
+        assert!(multiple.to_string().contains("exactly one mouse button"));
+
+        let down_out_multiple = expand(&quote! {
+            <div id="multiple-out" @mouse-down-out.left.right={handler} />
+        })
+        .unwrap_err();
+        assert!(
+            down_out_multiple
+                .to_string()
+                .contains("exactly one mouse button")
+        );
+
+        let unsupported_button = expand(&quote! {
+            <div id="unsupported" @mouse-up.primary={handler} />
+        })
+        .unwrap_err();
+        assert!(
+            unsupported_button
+                .to_string()
+                .contains("expected .left, .right, or .middle")
+        );
+
+        let unsupported_modifier = expand(&quote! {
+            <div id="move" @mouse-move.stop={handler} />
+        })
+        .unwrap_err();
+        assert!(
+            unsupported_modifier
+                .to_string()
+                .contains("@mouse-move does not support modifier `.stop`")
+        );
+
+        let pinch_modifier = expand(&quote! {
+            <div id="pinch" @pinch.stop={handler} />
+        })
+        .unwrap_err();
+        assert!(
+            pinch_modifier
+                .to_string()
+                .contains("@pinch does not support modifier `.stop`")
+        );
+
+        for source in [
+            quote!(<div id="key-up" @key-up.stop={handler} />),
+            quote!(<div id="modifiers" @modifiers-changed.passive={handler} />),
+            quote!(<div id="hover" @hover.capture={handler} />),
+            quote!(<div id="focus" :track-focus={&focus} @focus.once={handler} />),
+            quote!(<div id="blur" :track-focus={&focus} @blur.prevent={handler} />),
+        ] {
+            let error = expand(&source).unwrap_err();
+            assert!(error.to_string().contains("does not support modifier"));
+        }
     }
 
     #[test]
@@ -2491,6 +4148,48 @@ mod tests {
         ))
         .unwrap_err();
         assert!(error.to_string().contains("runtime class strings"));
+    }
+
+    #[test]
+    fn typed_inline_style_lowers_once_after_classes_and_before_events() {
+        let expanded = expand(&quote! {
+            <div
+                id="runtime-style"
+                class="w-4"
+                :class={if selected { "text-blue-500" } else { "text-red-500" }}
+                :style={make_refiner()}
+                @click={handler}
+            />
+        })
+        .unwrap()
+        .to_string();
+
+        assert_eq!(expanded.matches("make_refiner ()").count(), 1);
+        let inline_style = expanded.find("apply_style_refinement").unwrap();
+        let classes = expanded.find("when_else").unwrap();
+        let event = expanded.find("on_click").unwrap();
+        // The class expression is the helper's first argument, so Rust evaluates
+        // it before invoking the outer style-refinement call.
+        assert!(inline_style < classes && classes < event);
+    }
+
+    #[test]
+    fn typed_inline_style_requires_one_rust_expression() {
+        let duplicate = expand(&quote! {
+            <div :style={first} :style={second} />
+        })
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate :style binding"));
+
+        let literal = expand(&quote! {
+            <div :style="color: red" />
+        })
+        .unwrap_err();
+        assert!(
+            literal
+                .to_string()
+                .contains(":style must be a Rust expression")
+        );
     }
 
     #[test]

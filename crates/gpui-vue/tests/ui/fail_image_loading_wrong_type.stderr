@@ -1,0 +1,18 @@
+error[E0271]: expected `{closure@fail_image_loading_wrong_type.rs:6:60}` to return `AnyElement`, but it returns `usize`
+ --> tests/ui/fail_image_loading_wrong_type.rs:6:63
+  |
+6 |     let _ = view! { <img src="images/avatar.png" :loading={|| 42_usize} /> };
+  |             --------------------------------------------------^^^^^^^^------
+  |             |                                              |  |
+  |             |                                              |  expected `AnyElement`, found `usize`
+  |             |                                              this closure
+  |             required by a bound introduced by this call
+  |
+note: required by a bound in `gpui_vue::ui::image_loading`
+ --> src/ui.rs
+  |
+  | pub fn image_loading<Image, Loading>(image: Image, loading: Loading) -> Image
+  |        ------------- required by a bound in this function
+...
+  |     Loading: Fn() -> AnyElement + 'static,
+  |                      ^^^^^^^^^^ required by this bound in `image_loading`

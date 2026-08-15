@@ -709,6 +709,50 @@ where
     lifecycle: <ComponentType::MountState as NativeComponentMount<ComponentType>>::RenderToken,
 }
 
+/// Window-root owner for one generated native component.
+///
+/// Ordinary child components retain their lifecycle state in GPUI's keyed
+/// element state. A window root is already an [`Entity`], so it has no parent
+/// element slot in which to retain that state. This owner supplies the missing
+/// visual host: it keeps the lifecycle attachment alive for the lifetime of
+/// the window root and renders the same transparent [`HostedEntity`] adapter
+/// used by child component slots.
+///
+/// The lifecycle field intentionally precedes the component entity so visual
+/// teardown is queued before the final strong entity handle is released.
+#[cfg(any(feature = "desktop", test))]
+pub(crate) struct NativeComponentRoot<ComponentType>
+where
+    ComponentType: NativeComponent,
+{
+    /// Lifecycle attachment retained for the entire root visual identity.
+    lifecycle: ComponentType::MountState,
+    /// Generated component delegated through the transparent hosted element.
+    entity: Entity<ComponentType>,
+}
+
+#[cfg(any(feature = "desktop", test))]
+impl<ComponentType> NativeComponentRoot<ComponentType>
+where
+    ComponentType: NativeComponent,
+{
+    /// Attaches one generated component to a new GPUI window-root entity.
+    pub(crate) fn mount(entity: Entity<ComponentType>, cx: &mut App) -> Entity<Self> {
+        let lifecycle = ComponentType::attach_mount(&entity, cx);
+        cx.new(|_| Self { lifecycle, entity })
+    }
+}
+
+#[cfg(any(feature = "desktop", test))]
+impl<ComponentType> Render for NativeComponentRoot<ComponentType>
+where
+    ComponentType: NativeComponent,
+{
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        HostedEntity::new(self.entity.clone(), self.lifecycle.render_token())
+    }
+}
+
 impl<ComponentType> HostedEntity<ComponentType>
 where
     ComponentType: NativeComponent,
@@ -1192,8 +1236,9 @@ mod tests {
     use gpui::{Context, ElementId, IntoElement, Render, Window, div};
 
     use super::{
-        ComponentMount, ComponentMountState, LifecycleCallback, LifecyclePhase, LifecycleSignals,
-        NativeComponent, PropMissing, PropSet, RequiredProp, component_element,
+        ComponentLifecycleHooks, ComponentLifecycleMount, ComponentMount, ComponentMountState,
+        LifecycleCallback, LifecyclePhase, LifecycleSignals, NativeComponent, NativeComponentRoot,
+        PropMissing, PropSet, RequiredProp, component_element,
     };
 
     /// First compile-site factory identity used by the state-key regression test.
@@ -1228,6 +1273,65 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
         }
+    }
+
+    /// Hook-bearing component used to exercise the window-root host path.
+    struct RootLifecycleFixture {
+        /// Externally observable number of completed mounted callbacks.
+        mounted_calls: Rc<Cell<usize>>,
+    }
+
+    impl NativeComponent for RootLifecycleFixture {
+        type Props = Rc<Cell<usize>>;
+        type Input = Rc<Cell<usize>>;
+        type MountState = ComponentLifecycleMount<Self>;
+
+        fn construct(input: Self::Input, _cx: &mut Context<Self>) -> Self {
+            Self {
+                mounted_calls: input,
+            }
+        }
+
+        fn reconcile_input(&mut self, input: Self::Input, _cx: &mut Context<Self>) -> bool {
+            self.mounted_calls = input;
+            false
+        }
+    }
+
+    impl ComponentLifecycleHooks for RootLifecycleFixture {
+        const HAS_MOUNTED: bool = true;
+
+        fn mounted(component: &mut Self, _window: &mut Window, _cx: &mut Context<Self>) {
+            component
+                .mounted_calls
+                .set(component.mounted_calls.get() + 1);
+        }
+    }
+
+    impl Render for RootLifecycleFixture {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// Root ownership accepts the exact generated-component contract and keeps
+    /// its lifecycle attachment alongside the native entity.
+    #[test]
+    fn native_component_root_preserves_the_generated_host_contract() {
+        fn assert_root_contract<ComponentType>()
+        where
+            ComponentType: NativeComponent,
+            NativeComponentRoot<ComponentType>: Render,
+        {
+            let _: fn(
+                gpui::Entity<ComponentType>,
+                &mut gpui::App,
+            ) -> gpui::Entity<NativeComponentRoot<ComponentType>> =
+                NativeComponentRoot::<ComponentType>::mount;
+        }
+
+        assert_root_contract::<Fixture>();
+        assert_root_contract::<RootLifecycleFixture>();
     }
 
     /// Building or dropping a frame recipe does not invoke its mount-only factory.

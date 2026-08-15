@@ -1,0 +1,5 @@
+error: invalid arbitrary border radius `rounded-[50%]`; percentage and automatic radii are unsupported, use px or rem
+ --> tests/ui/fail_tailwind_arbitrary_radius_unit.rs:6:32
+  |
+6 |     let _ = view! { <div class="rounded-[50%]" /> };
+  |                                ^^^^^^^^^^^^^^^

@@ -13,8 +13,8 @@ error[E0631]: type mismatch in closure arguments
 26 | |      };
    | |______^ expected due to this
    |
-   = note: expected closure signature `for<'a, 'b, 'c> fn(&'a EmitterEvent, &'b mut gpui_vue::gpui::Window, &'c mut App) -> _`
-              found closure signature `fn(&str, &mut gpui_vue::gpui::Window, &mut App) -> _`
+   = note: expected closure signature `for<'a, 'b, 'c> fn(&'a EmitterEvent, &'b mut gpui_vue::paint::Window, &'c mut App) -> _`
+              found closure signature `fn(&str, &mut gpui_vue::paint::Window, &mut App) -> _`
 note: required by a bound in `EmitterEvent::__gpui_vue_dispatch_change`
   --> tests/ui/fail_component_event_wrong_type.rs:5:1
    |

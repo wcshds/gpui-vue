@@ -1,0 +1,5 @@
+error: v-text is available only on parent intrinsics, not PascalCase components
+ --> tests/ui/fail_v_text_component.rs:7:28
+  |
+7 |     let _ = view! { <Child v-text={label} /> };
+  |                            ^

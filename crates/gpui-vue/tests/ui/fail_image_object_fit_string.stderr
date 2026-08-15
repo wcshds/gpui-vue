@@ -1,0 +1,5 @@
+error: :object-fit must be a Rust expression in `{ ... }`
+ --> tests/ui/fail_image_object_fit_string.rs:6:50
+  |
+6 |     let _ = view! { <img src="images/avatar.png" :object-fit="cover" /> };
+  |                                                  ^

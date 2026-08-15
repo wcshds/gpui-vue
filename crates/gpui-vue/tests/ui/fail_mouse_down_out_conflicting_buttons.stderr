@@ -1,0 +1,5 @@
+error: @mouse-down-out requires exactly one mouse button modifier: .left, .right, or .middle
+ --> tests/ui/fail_mouse_down_out_conflicting_buttons.rs:7:27
+  |
+7 |         <div id="surface" @mouse-down-out.left.right={|_, _, _| {}} />
+  |                           ^

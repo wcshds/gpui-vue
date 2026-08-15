@@ -11,6 +11,8 @@
 //! candidate therefore emits only width and may remain invisible; callers must
 //! add an explicit `border-<color>` utility for portable rendering.
 
+use std::cmp::Ordering;
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Error, LitStr, Result};
@@ -51,6 +53,8 @@ pub(crate) struct CompiledClasses {
     group_active: Cascade,
     /// Declarations that apply while the element has focus.
     focus: Cascade,
+    /// Declarations that apply while keyboard navigation visibly focuses the element.
+    focus_visible: Cascade,
 }
 
 impl CompiledClasses {
@@ -71,6 +75,7 @@ impl CompiledClasses {
                 Variant::Active => &mut classes.active,
                 Variant::GroupActive => &mut classes.group_active,
                 Variant::Focus => &mut classes.focus,
+                Variant::FocusVisible => &mut classes.focus_visible,
             };
             cascade.insert(candidate.utility, candidate.important);
         }
@@ -105,6 +110,7 @@ impl CompiledClasses {
             (Variant::Active, &self.active),
             (Variant::GroupActive, &self.group_active),
             (Variant::Focus, &self.focus),
+            (Variant::FocusVisible, &self.focus_visible),
         ];
 
         for (left_index, (left_variant, left_cascade)) in states.iter().enumerate() {
@@ -164,6 +170,9 @@ impl CompiledClasses {
                 .has_effective_style_declarations(&self.regular)
             || self.focus.has_effective_style_declarations(&self.regular)
             || self
+                .focus_visible
+                .has_effective_style_declarations(&self.regular)
+            || self
                 .in_focus
                 .has_effective_style_declarations(&self.regular)
     }
@@ -171,6 +180,9 @@ impl CompiledClasses {
     /// Reports whether focus styling requires making the element focusable.
     pub(crate) fn needs_focusable(&self) -> bool {
         self.focus.has_effective_style_declarations(&self.regular)
+            || self
+                .focus_visible
+                .has_effective_style_declarations(&self.regular)
             || self
                 .in_focus
                 .has_effective_style_declarations(&self.regular)
@@ -218,6 +230,9 @@ impl CompiledClasses {
             .group_active
             .has_effective_style_declarations(&self.regular);
         let has_focus = self.focus.has_effective_style_declarations(&self.regular);
+        let has_focus_visible = self
+            .focus_visible
+            .has_effective_style_declarations(&self.regular);
 
         if has_in_focus {
             // This deliberately uses GPUI's native focus-tree seam. It avoids
@@ -270,6 +285,14 @@ impl CompiledClasses {
                     .apply(&quote!(__gpui_vue_style), crate_path, Some(&self.regular));
             output = quote!(#output.focus(|__gpui_vue_style| #style));
         }
+        if has_focus_visible {
+            let style = self.focus_visible.apply(
+                &quote!(__gpui_vue_style),
+                crate_path,
+                Some(&self.regular),
+            );
+            output = quote!(#output.focus_visible(|__gpui_vue_style| #style));
+        }
         output
     }
 }
@@ -299,6 +322,15 @@ impl Candidate {
             }
             None => (utility_source, false),
         };
+
+        if variant != Variant::Regular && utility_source == "content-normal" {
+            return Err(Error::new(
+                span,
+                format!(
+                    "`{source}` cannot be lowered in an interaction state: GPUI `content_normal()` clears the ordinary `align_content` refinement, but `None` inside a state refinement cannot reset an already-resolved base value; use `content-normal` only without a variant"
+                ),
+            ));
+        }
 
         let utility = Utility::parse(utility_source, span)?;
         if variant != Variant::Regular && utility.requires_stateful_id() {
@@ -335,6 +367,8 @@ enum Variant {
     GroupActive,
     /// The `focus:` variant.
     Focus,
+    /// The `focus-visible:` variant.
+    FocusVisible,
 }
 
 impl Variant {
@@ -348,6 +382,7 @@ impl Variant {
             Self::Active => "active",
             Self::GroupActive => "group-active",
             Self::Focus => "focus",
+            Self::FocusVisible => "focus-visible",
         }
     }
 
@@ -365,7 +400,8 @@ impl Variant {
             Self::GroupActive => 3,
             Self::Hover => 4,
             Self::Focus => 5,
-            Self::Active => 6,
+            Self::FocusVisible => 6,
+            Self::Active => 7,
         }
     }
 
@@ -375,10 +411,11 @@ impl Variant {
             Self::Regular => 0,
             Self::InFocus => 1,
             Self::Focus => 2,
-            Self::GroupHover => 3,
-            Self::Hover => 4,
-            Self::GroupActive => 5,
-            Self::Active => 6,
+            Self::FocusVisible => 3,
+            Self::GroupHover => 4,
+            Self::Hover => 5,
+            Self::GroupActive => 6,
+            Self::Active => 7,
         }
     }
 
@@ -416,7 +453,7 @@ fn split_variant(source: &str, span: Span) -> Result<(Variant, &str)> {
         return Err(Error::new(
             span,
             format!(
-                "stacked variants are not supported yet in `{source}`; supported single variants: in-focus, hover, group-hover, active, group-active, focus"
+                "stacked variants are not supported yet in `{source}`; supported single variants: in-focus, hover, group-hover, active, group-active, focus, focus-visible"
             ),
         ));
     }
@@ -427,6 +464,7 @@ fn split_variant(source: &str, span: Span) -> Result<(Variant, &str)> {
         "active" => Variant::Active,
         "group-active" => Variant::GroupActive,
         "focus" => Variant::Focus,
+        "focus-visible" => Variant::FocusVisible,
         "focus-within" => {
             return Err(Error::new(
                 span,
@@ -437,7 +475,7 @@ fn split_variant(source: &str, span: Span) -> Result<(Variant, &str)> {
             return Err(Error::new(
                 span,
                 format!(
-                    "unsupported class variant `{unknown}:`; supported: in-focus, hover, group-hover, active, group-active, focus"
+                    "unsupported class variant `{unknown}:`; supported: in-focus, hover, group-hover, active, group-active, focus, focus-visible"
                 ),
             ));
         }
@@ -472,10 +510,19 @@ impl Cascade {
                 if self.declarations[index].important && !important {
                     continue;
                 }
-                if self.declarations[index].important == important
-                    && self.declarations[index].canonical_rank > canonical_rank
-                {
-                    continue;
+                if self.declarations[index].important == important {
+                    let existing_follows_candidate = match (
+                        self.declarations[index].value.candidate_order(),
+                        value.candidate_order(),
+                    ) {
+                        (Some(existing), Some(candidate)) => {
+                            compare_tailwind_candidates(existing, candidate).is_gt()
+                        }
+                        _ => self.declarations[index].canonical_rank > canonical_rank,
+                    };
+                    if existing_follows_candidate {
+                        continue;
+                    }
                 }
                 self.declarations.remove(index);
             }
@@ -553,6 +600,70 @@ impl Cascade {
     }
 }
 
+/// Reproduces Tailwind's alphanumeric final candidate-name comparison.
+///
+/// Runs of ASCII digits compare as numbers, with the original spelling as a
+/// fallback for equal numeric values. This is Tailwind 4.3.2's last ordering
+/// key after variant, property order, and declaration count.
+fn compare_tailwind_candidates(left: &str, right: &str) -> Ordering {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut index = 0;
+
+    while index < left.len().min(right.len()) {
+        let left_byte = left[index];
+        let right_byte = right[index];
+        if left_byte.is_ascii_digit() && right_byte.is_ascii_digit() {
+            let left_start = index;
+            let right_start = index;
+            let mut left_end = index + 1;
+            let mut right_end = index + 1;
+            while left.get(left_end).is_some_and(u8::is_ascii_digit) {
+                left_end += 1;
+            }
+            while right.get(right_end).is_some_and(u8::is_ascii_digit) {
+                right_end += 1;
+            }
+
+            let left_digits = &left[left_start..left_end];
+            let right_digits = &right[right_start..right_end];
+            let numeric_order = compare_ascii_numbers(left_digits, right_digits);
+            if !numeric_order.is_eq() {
+                return numeric_order;
+            }
+            let spelling_order = left_digits.cmp(right_digits);
+            if !spelling_order.is_eq() {
+                return spelling_order;
+            }
+
+            index = left_end.min(right_end);
+            continue;
+        }
+        match left_byte.cmp(&right_byte) {
+            Ordering::Equal => index += 1,
+            order => return order,
+        }
+    }
+
+    left.len().cmp(&right.len())
+}
+
+/// Compares non-empty ASCII integer spellings without host integer overflow.
+fn compare_ascii_numbers(left: &[u8], right: &[u8]) -> Ordering {
+    let left_significant = left
+        .iter()
+        .position(|byte| *byte != b'0')
+        .map_or(&left[left.len()..], |index| &left[index..]);
+    let right_significant = right
+        .iter()
+        .position(|byte| *byte != b'0')
+        .map_or(&right[right.len()..], |index| &right[index..]);
+    left_significant
+        .len()
+        .cmp(&right_significant.len())
+        .then_with(|| left_significant.cmp(right_significant))
+}
+
 /// One resolved assignment to a typed GPUI style property.
 #[derive(Debug)]
 struct Declaration {
@@ -587,7 +698,7 @@ struct UtilityDeclaration {
 impl Utility {
     /// Parses a supported utility into its GPUI property assignments.
     fn parse(class: &str, span: Span) -> Result<Self> {
-        if let Some(utility) = parse_radius_utility(class, span) {
+        if let Some(utility) = parse_radius_utility(class, span)? {
             return Ok(utility);
         }
         if let Some(utility) = parse_grid_tracks(class, span)? {
@@ -615,17 +726,20 @@ impl Utility {
         if let Some(utility) = parse_length_utility(class, span)? {
             return Ok(utility);
         }
+        if let Some(family) = font_family(class) {
+            return Ok(Self::single(
+                Property::FontFamily,
+                PropertyValue::FontFamily(family),
+            ));
+        }
         if let Some(weight) = class.strip_prefix("font-").and_then(font_weight) {
             return Ok(Self::single(
                 Property::FontWeight,
                 PropertyValue::FontWeight(format_ident!("{weight}", span = span)),
             ));
         }
-        if let Some(size) = class.strip_prefix("text-").and_then(text_size) {
-            return Ok(Self::single(
-                Property::FontSize,
-                PropertyValue::TextSize(size),
-            ));
+        if let Some(utility) = parse_text_size(class, span)? {
+            return Ok(utility);
         }
         if let Some(utility) = parse_color_utility(class, span)? {
             return Ok(utility);
@@ -841,6 +955,8 @@ enum Property {
     BorderColor,
     /// Font weight.
     FontWeight,
+    /// Font family.
+    FontFamily,
     /// Font size.
     FontSize,
     /// Element opacity.
@@ -921,6 +1037,24 @@ enum GridEdge {
     End,
 }
 
+/// One independently cascading native overflow axis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverflowAxis {
+    /// Horizontal overflow.
+    X,
+    /// Vertical overflow.
+    Y,
+}
+
+/// One exact non-retained GPUI overflow value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverflowValue {
+    /// Clip overflowing content without creating a scroll container.
+    Clip,
+    /// Keep overflowing content visible and contributing to parent overflow.
+    Visible,
+}
+
 /// A GPUI grid placement that can be lowered without parsing at runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GridPlacementValue {
@@ -948,8 +1082,10 @@ enum PropertyValue {
     },
     /// A GPUI font-weight constant.
     FontWeight(Ident),
-    /// A font size measured in rem units.
-    TextSize(f32),
+    /// A native font-family name selected by a portable utility.
+    FontFamily(&'static str),
+    /// A font size measured in a statically parsed native length.
+    TextSize(LengthValue),
     /// An opacity in the inclusive zero-to-one range.
     Opacity(f32),
     /// A GPUI length setter and parsed length.
@@ -958,6 +1094,8 @@ enum PropertyValue {
         method: Ident,
         /// Static length passed to the setter.
         value: LengthValue,
+        /// Original candidate when Tailwind compares this property by name.
+        candidate_order: Option<Box<str>>,
     },
     /// A uniform count of `minmax(0, 1fr)` grid tracks.
     GridTracks {
@@ -991,6 +1129,13 @@ enum PropertyValue {
         /// Exact enum variant assigned to the field.
         variant: Ident,
     },
+    /// A direct assignment to one axis of GPUI's nested overflow refinement.
+    Overflow {
+        /// Independently cascading overflow axis.
+        axis: OverflowAxis,
+        /// Exact public GPUI overflow enum value.
+        value: OverflowValue,
+    },
     /// A positive number of visible text lines.
     LineClamp(usize),
 }
@@ -1007,9 +1152,13 @@ impl PropertyValue {
             Self::FontWeight(weight) => {
                 quote!(#target.font_weight(#crate_path::gpui::FontWeight::#weight))
             }
-            Self::TextSize(rems) => quote!(#target.text_size(#crate_path::gpui::rems(#rems))),
+            Self::FontFamily(family) => quote!(#target.font_family(#family)),
+            Self::TextSize(size) => {
+                let size = size.tokens(crate_path);
+                quote!(#target.text_size(#size))
+            }
             Self::Opacity(opacity) => quote!(#target.opacity(#opacity)),
-            Self::Length { method, value } => {
+            Self::Length { method, value, .. } => {
                 let value = value.tokens(crate_path);
                 quote!(#target.#method(#value))
             }
@@ -1058,6 +1207,22 @@ impl PropertyValue {
                 );
                 __gpui_vue_styled
             }),
+            Self::Overflow { axis, value } => {
+                let axis = match axis {
+                    OverflowAxis::X => format_ident!("x"),
+                    OverflowAxis::Y => format_ident!("y"),
+                };
+                let value = match value {
+                    OverflowValue::Clip => format_ident!("Clip"),
+                    OverflowValue::Visible => format_ident!("Visible"),
+                };
+                quote!({
+                    let mut __gpui_vue_styled = #target;
+                    __gpui_vue_styled.style().overflow.#axis =
+                        ::core::option::Option::Some(#crate_path::gpui::Overflow::#value);
+                    __gpui_vue_styled
+                })
+            }
             Self::LineClamp(lines) => quote!({
                 let mut __gpui_vue_styled = #target;
                 __gpui_vue_styled
@@ -1072,6 +1237,17 @@ impl PropertyValue {
     /// Reports whether this operation needs GPUI's stateful element wrapper.
     fn requires_stateful_id(&self) -> bool {
         matches!(self, Self::StatefulMethod(_))
+    }
+
+    /// Returns a candidate whose exact alphanumeric ordering decides a tie.
+    fn candidate_order(&self) -> Option<&str> {
+        match self {
+            Self::Length {
+                candidate_order: Some(candidate),
+                ..
+            } => Some(candidate),
+            _ => None,
+        }
     }
 }
 
@@ -1535,6 +1711,7 @@ fn parse_length_utility(class: &str, span: Span) -> Result<Option<Utility>> {
             value: PropertyValue::Length {
                 method: format_ident!("{}", target.method, span = span),
                 value,
+                candidate_order: None,
             },
             canonical_rank,
         })
@@ -1759,6 +1936,7 @@ fn parse_border_width(class: &str, span: Span) -> Result<Option<Utility>> {
                 value: PropertyValue::Length {
                     method: format_ident!("{}", target.method, span = span),
                     value,
+                    candidate_order: None,
                 },
                 canonical_rank: prefix.canonical_rank,
             })
@@ -1777,6 +1955,16 @@ struct RadiusPrefix {
     targets: &'static [LengthTarget],
     /// Tailwind 4.3.2 stylesheet group order.
     canonical_rank: u128,
+}
+
+/// One parsed named or safe arbitrary physical radius.
+struct RadiusValue {
+    /// Typed native length passed to the GPUI corner setter.
+    value: LengthValue,
+    /// Tailwind candidate order within one physical prefix.
+    suffix_rank: u128,
+    /// Exact arbitrary candidate spelling used to break same-rank ties.
+    candidate_order: Option<Box<str>>,
 }
 
 /// Physical radius families in longest-first parser order.
@@ -1851,7 +2039,14 @@ const RADIUS_PREFIXES: &[RadiusPrefix] = &[
 ];
 
 /// Parses broad, side, and individual physical corner-radius utilities.
-fn parse_radius_utility(class: &str, span: Span) -> Option<Utility> {
+fn parse_radius_utility(class: &str, span: Span) -> Result<Option<Utility>> {
+    if class.starts_with("-rounded") {
+        return Err(Error::new(
+            span,
+            format!("negative border radii are not valid in `{class}`"),
+        ));
+    }
+
     for prefix in RADIUS_PREFIXES {
         let suffix = if class == prefix.source {
             ""
@@ -1863,7 +2058,12 @@ fn parse_radius_utility(class: &str, span: Span) -> Option<Utility> {
         } else {
             continue;
         };
-        let (value, suffix_rank) = radius_value(suffix)?;
+        let Some(radius) = radius_value(suffix, class, span)? else {
+            return Ok(None);
+        };
+        let candidate_order = radius
+            .candidate_order
+            .map(|candidate| format!("{}:{candidate}", prefix.canonical_rank).into_boxed_str());
         let declarations = prefix
             .targets
             .iter()
@@ -1871,32 +2071,69 @@ fn parse_radius_utility(class: &str, span: Span) -> Option<Utility> {
                 property: target.property,
                 value: PropertyValue::Length {
                     method: format_ident!("{}", target.method, span = span),
-                    value,
+                    value: radius.value,
+                    candidate_order: candidate_order.clone(),
                 },
-                canonical_rank: prefix.canonical_rank + suffix_rank,
+                canonical_rank: prefix.canonical_rank + radius.suffix_rank,
             })
             .collect();
-        return Some(Utility { declarations });
+        return Ok(Some(Utility { declarations }));
     }
-    None
+    Ok(None)
 }
 
 /// Maps Tailwind 4.3.2 radius suffixes to values and generated order.
-fn radius_value(suffix: &str) -> Option<(LengthValue, u128)> {
-    Some(match suffix {
+fn radius_value(suffix: &str, class: &str, span: Span) -> Result<Option<RadiusValue>> {
+    if let Some(arbitrary) = suffix
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        let value = parse_arbitrary_length(arbitrary).ok_or_else(|| {
+            Error::new(
+                span,
+                format!(
+                    "invalid arbitrary border radius `{class}`; use a nonnegative finite px or rem value"
+                ),
+            )
+        })?;
+        if !matches!(value, LengthValue::Pixels(_) | LengthValue::Rems(_)) {
+            return Err(Error::new(
+                span,
+                format!(
+                    "invalid arbitrary border radius `{class}`; percentage and automatic radii are unsupported, use px or rem"
+                ),
+            ));
+        }
+
+        // Bracket candidates sort after the numeric named radii and before
+        // `full`. Their exact alphanumeric spelling breaks ties between two
+        // arbitrary candidates independently of class-attribute order.
+        return Ok(Some(RadiusValue {
+            value,
+            suffix_rank: 4,
+            candidate_order: Some(class.into()),
+        }));
+    }
+
+    let (value, suffix_rank) = match suffix {
         "" => (LengthValue::Rems(0.25), 0),
         "2xl" => (LengthValue::Rems(1.0), 1),
         "3xl" => (LengthValue::Rems(1.5), 2),
         "4xl" => (LengthValue::Rems(2.0), 3),
-        "full" => (LengthValue::Pixels(9_999.0), 4),
-        "lg" => (LengthValue::Rems(0.5), 5),
-        "md" => (LengthValue::Rems(0.375), 6),
-        "none" => (LengthValue::Pixels(0.0), 7),
-        "sm" => (LengthValue::Rems(0.25), 8),
-        "xl" => (LengthValue::Rems(0.75), 9),
-        "xs" => (LengthValue::Rems(0.125), 10),
-        _ => return None,
-    })
+        "full" => (LengthValue::Pixels(9_999.0), 5),
+        "lg" => (LengthValue::Rems(0.5), 6),
+        "md" => (LengthValue::Rems(0.375), 7),
+        "none" => (LengthValue::Pixels(0.0), 8),
+        "sm" => (LengthValue::Rems(0.25), 9),
+        "xl" => (LengthValue::Rems(0.75), 10),
+        "xs" => (LengthValue::Rems(0.125), 11),
+        _ => return Ok(None),
+    };
+    Ok(Some(RadiusValue {
+        value,
+        suffix_rank,
+        candidate_order: None,
+    }))
 }
 
 /// Parses uniform positive grid column and row counts representable by GPUI.
@@ -2234,6 +2471,32 @@ fn parse_line_height(class: &str, span: Span) -> Result<Option<Utility>> {
         "relaxed" => (LengthValue::Relative(1.625), NAMED_LINE_HEIGHT_RANK + 3),
         "snug" => (LengthValue::Relative(1.375), NAMED_LINE_HEIGHT_RANK + 4),
         "tight" => (LengthValue::Relative(1.25), NAMED_LINE_HEIGHT_RANK + 5),
+        _ if value.starts_with('[') || value.ends_with(']') => {
+            let arbitrary = value
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .ok_or_else(|| invalid_line_height(span, class))?;
+            if arbitrary.starts_with('+') || arbitrary.starts_with('-') {
+                return Err(invalid_line_height(span, class));
+            }
+            let length = parse_arbitrary_length(arbitrary)
+                .filter(|length| !matches!(length, LengthValue::Auto))
+                .or_else(|| {
+                    arbitrary
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|value| value.is_finite() && *value >= 0.0)
+                        .map(LengthValue::Relative)
+                })
+                .ok_or_else(|| invalid_line_height(span, class))?;
+            let rank = match length {
+                LengthValue::Pixels(value) => u128::from(value.to_bits()),
+                LengthValue::Rems(value) => (1_u128 << 32) | u128::from(value.to_bits()),
+                LengthValue::Relative(value) => (2_u128 << 32) | u128::from(value.to_bits()),
+                LengthValue::Auto => unreachable!(),
+            };
+            (length, rank)
+        }
         _ => {
             let spacing = value.parse::<f32>().map_err(|_| {
                 Error::new(
@@ -2264,8 +2527,55 @@ fn parse_line_height(class: &str, span: Span) -> Result<Option<Utility>> {
         PropertyValue::Length {
             method: format_ident!("line_height", span = span),
             value: line_height,
+            candidate_order: Some(class.into()),
         },
         canonical_rank,
+    )))
+}
+
+/// Produces the supported line-height syntax diagnostic.
+fn invalid_line_height(span: Span, class: &str) -> Error {
+    Error::new(
+        span,
+        format!(
+            "invalid line height `{class}`; use a named value, nonnegative spacing, or an arbitrary nonnegative unitless, %, px, or rem value"
+        ),
+    )
+}
+
+/// Parses default and safe arbitrary font sizes without consuming text colors.
+fn parse_text_size(class: &str, span: Span) -> Result<Option<Utility>> {
+    let Some(value) = class.strip_prefix("text-") else {
+        return Ok(None);
+    };
+    if let Some(size) = text_size(value) {
+        return Ok(Some(Utility::single(
+            Property::FontSize,
+            PropertyValue::TextSize(LengthValue::Rems(size)),
+        )));
+    }
+    let Some(arbitrary) = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return Ok(None);
+    };
+    if arbitrary.starts_with('#') {
+        return Ok(None);
+    }
+    let size = parse_arbitrary_length(arbitrary)
+        .filter(|length| matches!(length, LengthValue::Pixels(_) | LengthValue::Rems(_)))
+        .ok_or_else(|| {
+            Error::new(
+                span,
+                format!(
+                    "invalid font size `{class}`; arbitrary font sizes require a nonnegative px or rem length"
+                ),
+            )
+        })?;
+    Ok(Some(Utility::single(
+        Property::FontSize,
+        PropertyValue::TextSize(size),
     )))
 }
 
@@ -2716,7 +3026,19 @@ fn parse_alignment_utility(class: &str, span: Span) -> Result<Option<Utility>> {
         )));
     }
 
-    if matches!(class, "content-normal" | "justify-normal" | "self-auto") {
+    if class == "content-normal" {
+        // GPUI deliberately exposes this reset as a `Styled` method rather
+        // than an enum value. It is faithful in the ordinary cascade, where
+        // the call clears any earlier `align_content` refinement.
+        return Ok(Some(Utility::ranked_method(
+            Property::AlignContent,
+            "content_normal",
+            span,
+            12,
+        )));
+    }
+
+    if matches!(class, "justify-normal" | "self-auto") {
         return Err(Error::new(
             span,
             format!(
@@ -2764,20 +3086,12 @@ fn reject_unrepresentable_layout_utility(class: &str, span: Span) -> Result<()> 
 
     if matches!(
         class,
-        "overflow-auto"
-            | "overflow-x-auto"
-            | "overflow-y-auto"
-            | "overflow-clip"
-            | "overflow-x-clip"
-            | "overflow-y-clip"
-            | "overflow-visible"
-            | "overflow-x-visible"
-            | "overflow-y-visible"
+        "overflow-auto" | "overflow-x-auto" | "overflow-y-auto"
     ) {
         return Err(Error::new(
             span,
             format!(
-                "Tailwind `{class}` cannot be represented faithfully by GPUI 0.2.2 retained overflow APIs; supported exact values are hidden and static scroll"
+                "Tailwind `{class}` requests automatic scroll-container behavior that GPUI 0.2.2 does not expose; supported exact values are clip, hidden, static scroll, and visible"
             ),
         ));
     }
@@ -2837,6 +3151,9 @@ fn parse_exact_utility(class: &str, span: Span) -> Option<Utility> {
 
 /// Lowers utilities whose GPUI convenience methods mutate multiple fields.
 fn parse_compound_utility(class: &str, span: Span) -> Option<Utility> {
+    if let Some(utility) = parse_overflow_utility(class, span) {
+        return Some(utility);
+    }
     Some(match class {
         // Tailwind emits the four flex shorthand rules in this order. Their
         // longhand declarations are emitted later and use rank 100 or above.
@@ -2885,10 +3202,23 @@ fn parse_compound_utility(class: &str, span: Span) -> Option<Utility> {
             ],
             span,
         ),
+        _ => return None,
+    })
+}
+
+/// Lowers exact native overflow values in Tailwind's canonical property order.
+fn parse_overflow_utility(class: &str, span: Span) -> Option<Utility> {
+    // Tailwind sorts pure overflow candidates by the global property order
+    // (`overflow`, `overflow-x`, `overflow-y`) and then compares equal-property
+    // candidate names alphanumerically. `truncate` and `line-clamp-*` sort
+    // before this family because they emit additional earlier or more numerous
+    // declarations.
+    Some(match class {
+        "overflow-clip" => overflow_pair(OverflowValue::Clip, 2),
         "overflow-hidden" => Utility::ranked_methods(
             [
-                (Property::OverflowX, "overflow_x_hidden", 2),
-                (Property::OverflowY, "overflow_y_hidden", 2),
+                (Property::OverflowX, "overflow_x_hidden", 3),
+                (Property::OverflowY, "overflow_y_hidden", 3),
             ],
             span,
         ),
@@ -2900,7 +3230,7 @@ fn parse_compound_utility(class: &str, span: Span) -> Option<Utility> {
                         "overflow_x_scroll",
                         span = span
                     )),
-                    canonical_rank: 3,
+                    canonical_rank: 4,
                 },
                 UtilityDeclaration {
                     property: Property::OverflowY,
@@ -2908,24 +3238,82 @@ fn parse_compound_utility(class: &str, span: Span) -> Option<Utility> {
                         "overflow_y_scroll",
                         span = span
                     )),
-                    canonical_rank: 3,
+                    canonical_rank: 4,
                 },
             ],
         },
+        "overflow-visible" => overflow_pair(OverflowValue::Visible, 5),
+        "overflow-x-clip" => {
+            overflow_axis(Property::OverflowX, OverflowAxis::X, OverflowValue::Clip, 6)
+        }
         "overflow-x-hidden" => {
-            Utility::ranked_method(Property::OverflowX, "overflow_x_hidden", span, 4)
+            Utility::ranked_method(Property::OverflowX, "overflow_x_hidden", span, 7)
         }
         "overflow-x-scroll" => {
-            Utility::ranked_stateful_method(Property::OverflowX, "overflow_x_scroll", span, 5)
+            Utility::ranked_stateful_method(Property::OverflowX, "overflow_x_scroll", span, 8)
         }
+        "overflow-x-visible" => overflow_axis(
+            Property::OverflowX,
+            OverflowAxis::X,
+            OverflowValue::Visible,
+            9,
+        ),
+        "overflow-y-clip" => overflow_axis(
+            Property::OverflowY,
+            OverflowAxis::Y,
+            OverflowValue::Clip,
+            10,
+        ),
         "overflow-y-hidden" => {
-            Utility::ranked_method(Property::OverflowY, "overflow_y_hidden", span, 6)
+            Utility::ranked_method(Property::OverflowY, "overflow_y_hidden", span, 11)
         }
         "overflow-y-scroll" => {
-            Utility::ranked_stateful_method(Property::OverflowY, "overflow_y_scroll", span, 7)
+            Utility::ranked_stateful_method(Property::OverflowY, "overflow_y_scroll", span, 12)
         }
+        "overflow-y-visible" => overflow_axis(
+            Property::OverflowY,
+            OverflowAxis::Y,
+            OverflowValue::Visible,
+            13,
+        ),
         _ => return None,
     })
+}
+
+/// Expands one native overflow shorthand into independently cascading axes.
+fn overflow_pair(value: OverflowValue, canonical_rank: u128) -> Utility {
+    Utility {
+        declarations: vec![
+            overflow_declaration(Property::OverflowX, OverflowAxis::X, value, canonical_rank),
+            overflow_declaration(Property::OverflowY, OverflowAxis::Y, value, canonical_rank),
+        ],
+    }
+}
+
+/// Creates one native overflow-axis utility.
+fn overflow_axis(
+    property: Property,
+    axis: OverflowAxis,
+    value: OverflowValue,
+    canonical_rank: u128,
+) -> Utility {
+    Utility {
+        declarations: vec![overflow_declaration(property, axis, value, canonical_rank)],
+    }
+}
+
+/// Creates one exact nested GPUI overflow refinement assignment.
+fn overflow_declaration(
+    property: Property,
+    axis: OverflowAxis,
+    value: OverflowValue,
+    canonical_rank: u128,
+) -> UtilityDeclaration {
+    UtilityDeclaration {
+        property,
+        value: PropertyValue::Overflow { axis, value },
+        canonical_rank,
+    }
 }
 
 /// Expands one CSS flex shorthand into three independently cascading fields.
@@ -2959,6 +3347,7 @@ fn flex_shorthand(
                 value: PropertyValue::Length {
                     method: format_ident!("flex_basis", span = span),
                     value: basis,
+                    candidate_order: None,
                 },
                 canonical_rank,
             },
@@ -3068,6 +3457,15 @@ fn font_weight(value: &str) -> Option<&'static str> {
         "bold" => "BOLD",
         "extrabold" => "EXTRA_BOLD",
         "black" => "BLACK",
+        _ => return None,
+    })
+}
+
+/// Maps the native-safe default font-family utilities used by desktop views.
+fn font_family(class: &str) -> Option<&'static str> {
+    Some(match class {
+        "font-sans" => ".SystemUIFont",
+        "font-mono" => "SF Mono",
         _ => return None,
     })
 }
@@ -3185,6 +3583,14 @@ mod tests {
         }
     }
 
+    /// Reads the exact nested overflow value selected for `property`.
+    fn resolved_overflow(cascade: &Cascade, property: Property) -> (OverflowAxis, OverflowValue) {
+        match &resolved_declaration(cascade, property).value {
+            PropertyValue::Overflow { axis, value } => (*axis, *value),
+            _ => panic!("the requested property should hold a nested overflow assignment"),
+        }
+    }
+
     /// Reads the retained-state GPUI method selected for `property`.
     fn resolved_stateful_method(cascade: &Cascade, property: Property) -> String {
         match &resolved_declaration(cascade, property).value {
@@ -3197,14 +3603,35 @@ mod tests {
     #[test]
     fn parses_variants_without_runtime_strings() {
         let classes = CompiledClasses::parse(&LitStr::new(
-            "flex p-4 bg-slate-950 hover:bg-blue-500 active:bg-blue-700",
+            "flex p-4 bg-slate-950 hover:bg-blue-500 focus-visible:text-white active:bg-blue-700",
             Span::call_site(),
         ))
         .expect("the fixture should be supported");
         assert_eq!(classes.regular.declarations.len(), 6);
         assert_eq!(classes.hover.declarations.len(), 1);
+        assert_eq!(classes.focus_visible.declarations.len(), 1);
         assert!(classes.needs_stateful_id());
-        assert!(!classes.needs_focusable());
+        assert!(classes.needs_focusable());
+    }
+
+    /// Lowers `focus-visible:` through GPUI's keyboard-modality predicate.
+    #[test]
+    fn lowers_focus_visible_with_focus_identity_requirements() {
+        let classes = CompiledClasses::parse(&LitStr::new(
+            "focus:bg-slate-800 focus-visible:bg-blue-500 active:bg-blue-700",
+            Span::call_site(),
+        ))
+        .expect("focus, focus-visible, and active have the same winner order in both engines");
+
+        assert!(classes.needs_stateful_id());
+        assert!(classes.needs_focusable());
+        assert_eq!(classes.focus_visible.declarations.len(), 1);
+        let variants = classes
+            .apply_variants(quote!(element), &quote!(::gpui_vue))
+            .to_string();
+        assert!(variants.contains("focus_visible"));
+        assert!(variants.contains("focus"));
+        assert!(variants.contains("active"));
     }
 
     /// Lowers groups plus GPUI's native ancestor-or-self focus-tree seam.
@@ -3273,11 +3700,12 @@ mod tests {
         // (prefix, Tailwind effective precedence, GPUI refinement order).
         let states = [
             ("in-focus", 1_u8, 1_u8),
-            ("group-hover", 2, 3),
-            ("group-active", 3, 5),
-            ("hover", 4, 4),
+            ("group-hover", 2, 4),
+            ("group-active", 3, 6),
+            ("hover", 4, 5),
             ("focus", 5, 2),
-            ("active", 6, 6),
+            ("focus-visible", 6, 3),
+            ("active", 7, 7),
         ];
 
         for (left_index, left) in states.iter().enumerate() {
@@ -3332,6 +3760,10 @@ mod tests {
             "group-active:flex! hover:block",
             "focus:block hover:opacity-50",
             "hover:opacity-50 focus:block",
+            "focus:block focus-visible:flex",
+            "focus-visible:flex focus:block",
+            "focus-visible:block active:flex",
+            "active:flex focus-visible:block",
         ] {
             CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
                 .unwrap_or_else(|error| panic!("`{fixture}` should remain supported: {error}"));
@@ -3383,6 +3815,7 @@ mod tests {
             "active",
             "group-active",
             "focus",
+            "focus-visible",
         ] {
             for fixture in [
                 format!("block! {variant}:flex"),
@@ -3575,6 +4008,62 @@ mod tests {
         }
     }
 
+    /// Lowers the one native alignment reset only in the ordinary cascade.
+    #[test]
+    fn content_normal_is_a_regular_only_native_reset() {
+        for fixture in [
+            "content-around content-normal",
+            "content-normal content-around",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("content-normal should lower through GPUI's native reset");
+            assert_eq!(
+                resolved_method(&classes.regular, Property::AlignContent),
+                "content_normal"
+            );
+            assert!(
+                classes
+                    .apply_regular(quote!(element), &quote!(::gpui_vue))
+                    .to_string()
+                    .contains("content_normal")
+            );
+        }
+
+        for fixture in [
+            "content-stretch content-normal!",
+            "content-normal! content-stretch",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("important content-normal should beat an ordinary alignment");
+            assert_eq!(
+                resolved_method(&classes.regular, Property::AlignContent),
+                "content_normal"
+            );
+            assert!(resolved_declaration(&classes.regular, Property::AlignContent).important);
+        }
+
+        CompiledClasses::parse(&LitStr::new(
+            "content-normal hover:content-start",
+            Span::call_site(),
+        ))
+        .expect("a regular reset may still have a concrete state override");
+
+        for variant in [
+            "in-focus",
+            "hover",
+            "group-hover",
+            "active",
+            "group-active",
+            "focus",
+            "focus-visible",
+        ] {
+            let fixture = format!("{variant}:content-normal");
+            let error = CompiledClasses::parse(&LitStr::new(&fixture, Span::call_site()))
+                .expect_err("a state refinement cannot clear an inherited base field");
+            assert!(error.to_string().contains("only without a variant"));
+        }
+    }
+
     /// Keeps both fields of important `place-content-*` above ordinary longhands.
     #[test]
     fn important_place_content_blocks_each_ordinary_longhand() {
@@ -3647,11 +4136,11 @@ mod tests {
     fn rejects_unrepresentable_layout_values_and_scroll_variants() {
         for (fixture, expected) in [
             ("hover:overflow-scroll", "retained overflow state"),
-            ("content-normal", "cannot be represented faithfully"),
+            ("justify-normal", "cannot be represented faithfully"),
             ("self-auto", "cannot be represented faithfully"),
             ("items-center-safe", "safe-overflow"),
             ("order-1", "no public order field"),
-            ("overflow-clip", "cannot be represented faithfully"),
+            ("overflow-auto", "automatic scroll-container"),
             ("inline-flex", "no exact GPUI"),
         ] {
             let error = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
@@ -3795,6 +4284,132 @@ mod tests {
         }
     }
 
+    /// Accepts only finite nonnegative physical px/rem arbitrary radii.
+    #[test]
+    fn parses_safe_arbitrary_physical_radius_matrix() {
+        for (prefix, expected_slots) in [
+            ("rounded", 4),
+            ("rounded-t", 2),
+            ("rounded-r", 2),
+            ("rounded-b", 2),
+            ("rounded-l", 2),
+            ("rounded-tl", 1),
+            ("rounded-tr", 1),
+            ("rounded-br", 1),
+            ("rounded-bl", 1),
+        ] {
+            for (raw, expected) in [
+                ("7px", LengthValue::Pixels(7.0)),
+                ("0.75rem", LengthValue::Rems(0.75)),
+            ] {
+                let fixture = format!("{prefix}-[{raw}]");
+                let classes = CompiledClasses::parse(&LitStr::new(&fixture, Span::call_site()))
+                    .unwrap_or_else(|error| panic!("`{fixture}` should compile: {error}"));
+                assert_eq!(classes.regular.declarations.len(), expected_slots);
+                assert!(classes.regular.declarations.iter().all(|declaration| {
+                    matches!(
+                        &declaration.value,
+                        PropertyValue::Length { value, .. } if *value == expected
+                    )
+                }));
+            }
+        }
+
+        for fixture in [
+            "rounded-[11px] rounded-t-[1.5rem] rounded-tl-[3px]",
+            "rounded-tl-[3px] rounded-t-[1.5rem] rounded-[11px]",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("arbitrary radius shorthands should retain physical prefix order");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusTopLeft),
+                LengthValue::Pixels(3.0)
+            );
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusTopRight),
+                LengthValue::Rems(1.5)
+            );
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusBottomRight),
+                LengthValue::Pixels(11.0)
+            );
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusBottomLeft),
+                LengthValue::Pixels(11.0)
+            );
+        }
+
+        for fixture in [
+            "rounded-t-[1rem] rounded-l-[2rem]",
+            "rounded-l-[2rem] rounded-t-[1rem]",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("physical prefix order should outrank arbitrary candidate spelling");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusTopLeft),
+                LengthValue::Rems(2.0)
+            );
+        }
+
+        for fixture in [
+            "rounded-[2px] rounded-[10px]",
+            "rounded-[10px] rounded-[2px]",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("arbitrary candidates should follow alphanumeric order");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusTopLeft),
+                LengthValue::Pixels(10.0)
+            );
+        }
+
+        for fixture in [
+            "rounded-[12px]! rounded-tl-none",
+            "rounded-tl-none rounded-[12px]!",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("important arbitrary shorthand should block an ordinary corner");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::RadiusTopLeft),
+                LengthValue::Pixels(12.0)
+            );
+            assert!(resolved_declaration(&classes.regular, Property::RadiusTopLeft).important);
+        }
+
+        let states = CompiledClasses::parse(&LitStr::new(
+            "rounded-[2px] hover:rounded-t-[1rem]",
+            Span::call_site(),
+        ))
+        .expect("arbitrary radii should work in ordinary state refinements");
+        assert!(
+            states
+                .apply_variants(quote!(element), &quote!(::gpui_vue))
+                .to_string()
+                .contains("rounded_tl")
+        );
+    }
+
+    /// Rejects every arbitrary radius that is not a safe physical length.
+    #[test]
+    fn rejects_unsafe_arbitrary_physical_radii() {
+        for fixture in [
+            "-rounded-[4px]",
+            "rounded-[-1px]",
+            "rounded-[NaNpx]",
+            "rounded-[infrem]",
+            "rounded-[25%]",
+            "rounded-[auto]",
+            "rounded-[1em]",
+        ] {
+            let error = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect_err("unsafe arbitrary radii must fail during macro expansion");
+            assert!(
+                error.to_string().contains("border radi"),
+                "expected a radius-specific diagnostic for `{fixture}`, got `{error}`"
+            );
+        }
+    }
+
     /// Applies important radius shorthands independently to all four corners.
     #[test]
     fn important_radius_compounds_block_each_ordinary_corner() {
@@ -3876,6 +4491,62 @@ mod tests {
                         == property
                 )
         );
+    }
+
+    /// Resolves clip/visible and overflow longhands in Tailwind's global
+    /// property and alphanumeric candidate order, independent of source order.
+    #[test]
+    fn native_overflow_values_follow_canonical_order() {
+        for fixture in [
+            "overflow-clip overflow-hidden overflow-scroll overflow-visible",
+            "overflow-visible overflow-scroll overflow-hidden overflow-clip",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("every exact native overflow value should be supported");
+            assert_eq!(
+                resolved_overflow(&classes.regular, Property::OverflowX),
+                (OverflowAxis::X, OverflowValue::Visible)
+            );
+            assert_eq!(
+                resolved_overflow(&classes.regular, Property::OverflowY),
+                (OverflowAxis::Y, OverflowValue::Visible)
+            );
+            assert!(!classes.needs_stateful_id());
+        }
+
+        for fixture in [
+            "overflow-visible overflow-x-clip overflow-y-hidden",
+            "overflow-y-hidden overflow-x-clip overflow-visible",
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("axis longhands should sort after the overflow shorthand");
+            assert_eq!(
+                resolved_overflow(&classes.regular, Property::OverflowX),
+                (OverflowAxis::X, OverflowValue::Clip)
+            );
+            assert_eq!(
+                resolved_method(&classes.regular, Property::OverflowY),
+                "overflow_y_hidden"
+            );
+        }
+
+        let hovered = CompiledClasses::parse(&LitStr::new(
+            "overflow-clip hover:overflow-visible",
+            Span::call_site(),
+        ))
+        .expect("non-retained overflow enums should remain valid in state refinements");
+        assert!(!hovered.needs_stateful_id());
+        let regular = hovered
+            .apply_regular(quote!(element), &quote!(::gpui_vue))
+            .to_string();
+        assert!(regular.contains("Overflow :: Clip"));
+        assert!(regular.contains("overflow . x"));
+        assert!(regular.contains("overflow . y"));
+        let variants = hovered
+            .apply_variants(quote!(element), &quote!(::gpui_vue))
+            .to_string();
+        assert!(variants.contains("hover"));
+        assert!(variants.contains("Overflow :: Visible"));
     }
 
     /// Resolves flex shorthands before Tailwind's shrink, grow, and basis rules.
@@ -4131,12 +4802,32 @@ mod tests {
         assert!(resolved_declaration(&important.regular, Property::LineHeight).important);
     }
 
-    /// Rejects arbitrary, signed, negative, and non-finite leading values.
+    /// Accepts native absolute, unitless, and percentage arbitrary leading
+    /// while preserving Tailwind's alphanumeric candidate order.
     #[test]
-    fn rejects_unsupported_line_height() {
+    fn parses_extended_arbitrary_line_height() {
+        for (fixture, expected) in [
+            ("leading-[20px]", LengthValue::Pixels(20.0)),
+            ("leading-[1.5rem]", LengthValue::Rems(1.5)),
+            ("leading-[1.5]", LengthValue::Relative(1.5)),
+            ("leading-[150%]", LengthValue::Relative(1.5)),
+            ("leading-[20%]", LengthValue::Relative(0.2)),
+            ("leading-[0]", LengthValue::Relative(0.0)),
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("safe arbitrary line height should be supported");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::LineHeight),
+                expected
+            );
+        }
+
         for fixture in [
-            "leading-[1.5]",
-            "leading-[20px]",
+            "leading-[-1]",
+            "leading-[+1]",
+            "leading-[-20%]",
+            "leading-[auto]",
+            "leading-[inf]",
             "leading--1",
             "leading-+1",
             "leading-inf",
@@ -4146,6 +4837,66 @@ mod tests {
                 .expect_err("unsupported line height must be rejected");
             assert!(error.to_string().contains("line height"));
         }
+
+        for (fixture, expected) in [
+            ("leading-[1.25] leading-[1.5]", LengthValue::Relative(1.25)),
+            ("leading-[1.5] leading-[1.25]", LengthValue::Relative(1.25)),
+            ("leading-[125%] leading-[150%]", LengthValue::Relative(1.5)),
+            ("leading-[150%] leading-[125%]", LengthValue::Relative(1.5)),
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("arbitrary leading candidates should compile");
+            assert_eq!(
+                resolved_length(&classes.regular, Property::LineHeight),
+                expected,
+                "unexpected Tailwind candidate winner for `{fixture}`"
+            );
+        }
+    }
+
+    /// Parses px/rem arbitrary font sizes without colliding with text colors.
+    #[test]
+    fn parses_safe_arbitrary_font_sizes() {
+        for (fixture, expected) in [
+            ("text-[11px]", LengthValue::Pixels(11.0)),
+            ("text-[0.75rem]", LengthValue::Rems(0.75)),
+        ] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("safe arbitrary font size should be supported");
+            let PropertyValue::TextSize(actual) =
+                resolved_declaration(&classes.regular, Property::FontSize).value
+            else {
+                panic!("font size should lower to a typed native length");
+            };
+            assert_eq!(actual, expected);
+        }
+
+        CompiledClasses::parse(&LitStr::new("text-[#123456]", Span::call_site()))
+            .expect("an arbitrary text color must remain a color");
+        for fixture in ["text-[12%]", "text-[auto]", "text-[-1px]"] {
+            let error = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect_err("unsafe arbitrary font size must be rejected");
+            assert!(error.to_string().contains("font size"));
+        }
+    }
+
+    /// Maps the two native desktop family utilities without accepting arbitrary names.
+    #[test]
+    fn parses_native_font_families() {
+        for (fixture, expected) in [("font-sans", ".SystemUIFont"), ("font-mono", "SF Mono")] {
+            let classes = CompiledClasses::parse(&LitStr::new(fixture, Span::call_site()))
+                .expect("native font family should be supported");
+            let PropertyValue::FontFamily(actual) =
+                resolved_declaration(&classes.regular, Property::FontFamily).value
+            else {
+                panic!("font family should lower to a native family name");
+            };
+            assert_eq!(actual, expected);
+        }
+
+        let error = CompiledClasses::parse(&LitStr::new("font-serif", Span::call_site()))
+            .expect_err("an unverified native family must be rejected");
+        assert!(error.to_string().contains("font-serif"));
     }
 
     /// Rejects negative padding because GPUI and Tailwind do not allow it.

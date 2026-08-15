@@ -12,6 +12,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  docs:
+    name: Documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install documentation dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate and build the VitePress site
+        run: pnpm docs:check
+
   quality:
     name: Rust quality gates
     runs-on: ubuntu-latest

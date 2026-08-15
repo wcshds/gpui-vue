@@ -1,8 +1,16 @@
 //! Compile and type-level coverage for the `view!` macro expansion.
 
-use std::{any::TypeId, cell::Cell};
+use std::{
+    any::{Any, TypeId},
+    cell::{Cell, RefCell},
+};
 
-use gpui_vue::gpui::{App, ClickEvent, IntoElement, ParentElement, Window};
+use gpui_vue::gpui::{App, ClickEvent, IntoElement, ParentElement, PinchEvent, Window};
+use gpui_vue::media::ObjectFit;
+use gpui_vue::ui::{
+    Context, DragMoveEvent, Entity, ExternalPaths, FocusHandle, KeyUpEvent, ModifiersChangedEvent,
+    MouseDownEvent, Render, ScreenPoint, StyleRefinement, px, rgb,
+};
 use gpui_vue::{Slot, component, view};
 
 /// Typed props supplied by [`Child`] when it renders its actions slot.
@@ -265,6 +273,171 @@ fn build_view(show_details: bool, items: Vec<(usize, String)>) -> impl IntoEleme
 
 fn modified_click(_: &ClickEvent, _: &mut Window, _: &mut App) {}
 
+fn native_pinch(_: &PinchEvent, _: &mut Window, _: &mut App) {}
+
+fn native_key_up(_: &KeyUpEvent, _: &mut Window, _: &mut App) {}
+
+fn native_modifiers_changed(_: &ModifiersChangedEvent, _: &mut Window, _: &mut App) {}
+
+fn native_mouse_down_out(_: &MouseDownEvent, _: &mut Window, _: &mut App) {}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn native_hover(_: &bool, _: &mut Window, _: &mut App) {}
+
+fn native_focus(_: &mut Window, _: &mut App) {}
+
+fn native_blur(_: &mut Window, _: &mut App) {}
+
+/// Exact typed value retained by GPUI throughout one row drag.
+struct DraggedRow {
+    row: usize,
+}
+
+/// A second payload type used to verify independent repeated listener lanes.
+struct DraggedTab;
+
+/// Native entity rendered under the pointer while a row is being dragged.
+struct RowDragPreview(usize);
+
+impl Render for RowDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        gpui_vue::ui::div().child(self.0.to_string())
+    }
+}
+
+fn move_dragged_row(_: &DragMoveEvent<DraggedRow>, _: &mut Window, _: &mut App) {}
+
+fn move_dragged_tab(_: &DragMoveEvent<DraggedTab>, _: &mut Window, _: &mut App) {}
+
+fn drop_dragged_row(_: &DraggedRow, _: &mut Window, _: &mut App) {}
+
+fn drop_external_paths(_: &ExternalPaths, _: &mut Window, _: &mut App) {}
+
+fn accepts_dragged_row(payload: &dyn Any, _: &mut Window, _: &mut App) -> bool {
+    payload.is::<DraggedRow>()
+}
+
+fn row_drag_over(
+    style: StyleRefinement,
+    _: &DraggedRow,
+    _: &mut Window,
+    _: &mut App,
+) -> StyleRefinement {
+    style
+}
+
+fn external_paths_drag_over(
+    style: StyleRefinement,
+    _: &ExternalPaths,
+    _: &mut Window,
+    _: &mut App,
+) -> StyleRefinement {
+    style
+}
+
+/// Builds a drag source/drop target whose binding factories expose evaluation
+/// order without escaping their borrowed log into GPUI's retained callbacks.
+fn build_drag_drop_view(evaluations: &RefCell<Vec<&'static str>>) -> impl IntoElement + use<> {
+    view! {
+        <div
+            id="typed-drag-surface"
+            :drag-preview={{
+                evaluations.borrow_mut().push("preview");
+                |payload: &DraggedRow,
+                 _offset: ScreenPoint,
+                 _window: &mut Window,
+                 cx: &mut App| -> Entity<RowDragPreview> {
+                    let row = payload.row;
+                    cx.new(move |_| RowDragPreview(row))
+                }
+            }}
+            @drag-move={{
+                evaluations.borrow_mut().push("row move");
+                move_dragged_row
+            }}
+            :drag-payload={{
+                evaluations.borrow_mut().push("payload");
+                DraggedRow { row: 7 }
+            }}
+            on:drag-move={{
+                evaluations.borrow_mut().push("tab move");
+                move_dragged_tab
+            }}
+            :can-drop={{
+                evaluations.borrow_mut().push("predicate");
+                accepts_dragged_row
+            }}
+            :drag-over={{
+                evaluations.borrow_mut().push("row style");
+                row_drag_over
+            }}
+            @drop={{
+                evaluations.borrow_mut().push("row drop");
+                drop_dragged_row
+            }}
+            :drag-over={{
+                evaluations.borrow_mut().push("file style");
+                external_paths_drag_over
+            }}
+            on:drop={{
+                evaluations.borrow_mut().push("file drop");
+                drop_external_paths
+            }}
+        />
+    }
+}
+
+fn build_native_pinch_view() -> impl IntoElement {
+    view! {
+        <div id="pinch-surface" on:pinch={native_pinch} />
+    }
+}
+
+/// Builds one intrinsic `v-text` child between two source-ordered listeners.
+fn build_v_text_view(
+    evaluations: &RefCell<Vec<&'static str>>,
+    visible: bool,
+) -> impl IntoElement + use<> {
+    view! {
+        <span
+            id="native-v-text"
+            v-show={visible}
+            @hover={{
+                evaluations.borrow_mut().push("hover");
+                native_hover
+            }}
+            v-text={{
+                evaluations.borrow_mut().push("text");
+                "Native text child".to_owned()
+            }}
+            @click={{
+                evaluations.borrow_mut().push("click");
+                modified_click
+            }}
+        />
+    }
+}
+
+/// Compile-checks the extended typed native event surface, including exact
+/// focus and blur subscriptions backed by one explicit focus handle.
+#[allow(dead_code)]
+fn build_extended_native_event_view(focus: &FocusHandle) -> impl IntoElement + use<> {
+    view! {
+        <div
+            id="extended-native-events"
+            :track-focus={focus}
+            @key-up={native_key_up}
+            @modifiers-changed={native_modifiers_changed}
+            @mouse-down-out.left={native_mouse_down_out}
+            on:mouse-down-out.right={native_mouse_down_out}
+            @mouse-down-out.middle={native_mouse_down_out}
+            @hover={native_hover}
+            @focus={native_focus}
+            @blur={native_blur}
+        />
+    }
+}
+
 fn build_structural_view(ready: bool, pending: bool) -> impl IntoElement {
     let id = "retained";
     view! {
@@ -306,13 +479,28 @@ fn build_extended_tailwind_view() -> impl IntoElement {
     }
 }
 
+/// Compile-checks exact nested overflow values, CSS line-height ratios, and
+/// GPUI's keyboard-modality-aware focus-visible refinement in one native view.
+fn build_native_focus_visible_tailwind_view() -> impl IntoElement {
+    view! {
+        <div
+            id="native-focus-visible-tailwind"
+            class="overflow-clip hover:overflow-visible leading-[1.5] focus:bg-slate-800 focus-visible:bg-blue-500 active:bg-blue-700"
+        >
+            <span class="overflow-x-visible overflow-y-clip leading-[150%]">
+                "Exact native Tailwind lowering"
+            </span>
+        </div>
+    }
+}
+
 fn build_layout_tailwind_view() -> impl IntoElement {
     view! {
         <div
             id="layout-tailwind"
             class="grid place-content-evenly content-start items-stretch justify-stretch hover:justify-evenly overflow-y-scroll max-h-24"
         >
-            <span class="self-baseline basis-full min-w-0 max-w-full">
+            <span class="content-normal self-baseline basis-full min-w-0 max-w-full rounded-[7px] rounded-t-[0.75rem] hover:rounded-br-[5px]">
                 "Native alignment and retained scroll lowering"
             </span>
         </div>
@@ -530,11 +718,87 @@ fn build_aliased_event_component_view(
     }
 }
 
+/// Builds an intrinsic whose runtime dimensions and color cannot be expressed
+/// by one compile-time Tailwind class literal.
+fn build_typed_inline_style_view(
+    refiner_evaluations: &Cell<usize>,
+    selected: bool,
+) -> impl IntoElement {
+    view! {
+        <div
+            class="h-8 text-slate-500 hover:text-white"
+            :class={if selected { "bg-blue-600" } else { "bg-slate-900" }}
+            :style={{
+                refiner_evaluations.set(refiner_evaluations.get() + 1);
+                let runtime_width = if selected { px(96.0) } else { px(64.0) };
+                move |style| {
+                    style
+                        .w(runtime_width)
+                        .text_color(rgb(0xAA_BB_CC))
+                }
+            }}
+        >
+            "Runtime style"
+        </div>
+    }
+}
+
+/// Compile-checks native pointer occlusion and the styled image intrinsic.
+fn build_image_overlay_view(source: String) -> impl IntoElement {
+    view! {
+        <div id="image-overlay" occlude class="absolute inset-0">
+            <img
+                :src={source}
+                class="h-8 rounded"
+                :style={|style| style.w(px(72.0))}
+            />
+        </div>
+    }
+}
+
+/// Compile-checks GPUI's exact typed image policies and records render-time
+/// expression order independently from the lazy replacement callbacks.
+fn build_typed_image_view(evaluations: &RefCell<Vec<&'static str>>) -> impl IntoElement + use<> {
+    view! {
+        <img
+            :loading={{
+                evaluations.borrow_mut().push("loading");
+                || gpui_vue::ui::div().child("Loading").into_any_element()
+            }}
+            :src={{
+                evaluations.borrow_mut().push("source");
+                "images/preview.png"
+            }}
+            :fallback={{
+                evaluations.borrow_mut().push("fallback");
+                || gpui_vue::ui::div().child("Unavailable").into_any_element()
+            }}
+            :object-fit={{
+                evaluations.borrow_mut().push("object fit");
+                ObjectFit::Cover
+            }}
+            class="size-full rounded"
+        />
+    }
+}
+
+/// Compile-checks an unannotated handler behind the generated click-modifier
+/// wrapper, including the higher-ranked lifetimes required by GPUI listeners.
+fn build_stopped_click_view() -> impl IntoElement {
+    view! {
+        <div id="stopped-click" @click.stop={|_, _, _| {}}>
+            "Stopped"
+        </div>
+    }
+}
+
 #[test]
 fn expands_to_a_native_gpui_element_tree() {
     let _element = build_view(true, vec![(1, "Vapor".to_owned())]).into_element();
+    let _pinch = build_native_pinch_view().into_element();
     let _structural = build_structural_view(true, false).into_element();
     let _tailwind = build_extended_tailwind_view().into_element();
+    let _native_focus_visible_tailwind = build_native_focus_visible_tailwind_view().into_element();
     let _layout_tailwind = build_layout_tailwind_view().into_element();
     let _native_group_variants = build_native_group_variant_view().into_element();
     let _button_cursor = build_button_cursor_override_view().into_element();
@@ -572,6 +836,46 @@ fn expands_to_a_native_gpui_element_tree() {
         build_aliased_event_component_view(&handler_evaluations, "events".to_owned())
             .into_element();
     assert_eq!(handler_evaluations.get(), 2);
+    let inline_style_evaluations = Cell::new(0);
+    let _inline_style =
+        build_typed_inline_style_view(&inline_style_evaluations, true).into_element();
+    assert_eq!(inline_style_evaluations.get(), 1);
+    let _image_overlay =
+        build_image_overlay_view("https://example.invalid/preview.png".to_owned()).into_element();
+    let image_evaluations = RefCell::new(Vec::new());
+    let _typed_image = build_typed_image_view(&image_evaluations).into_element();
+    assert_eq!(
+        image_evaluations.into_inner(),
+        ["loading", "source", "fallback", "object fit"]
+    );
+    let _stopped_click = build_stopped_click_view().into_element();
+    let v_text_evaluations = RefCell::new(Vec::new());
+    let _v_text = build_v_text_view(&v_text_evaluations, true).into_element();
+    assert_eq!(v_text_evaluations.into_inner(), ["hover", "text", "click"]);
+    let drag_evaluations = RefCell::new(Vec::new());
+    let _drag_drop = build_drag_drop_view(&drag_evaluations).into_element();
+    assert_eq!(
+        drag_evaluations.into_inner(),
+        [
+            "preview",
+            "row move",
+            "payload",
+            "tab move",
+            "predicate",
+            "row style",
+            "row drop",
+            "file style",
+            "file drop",
+        ]
+    );
+}
+
+#[test]
+fn extended_native_event_handlers_keep_their_exact_public_types() {
+    let mouse_down = gpui_vue::ui::type_mouse_down_handler(native_mouse_down_out);
+    let focus = gpui_vue::ui::boxed_focus_handler(native_focus);
+    let blur = gpui_vue::ui::boxed_focus_handler(native_blur);
+    let _ = (mouse_down, focus, blur);
 }
 
 #[test]

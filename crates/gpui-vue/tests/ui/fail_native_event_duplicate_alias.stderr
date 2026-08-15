@@ -1,0 +1,5 @@
+error: duplicate modifiers-changed handler
+  --> tests/ui/fail_native_event_duplicate_alias.rs:10:13
+   |
+10 |             on:modifiers-changed={|_, _, _| {}}
+   |             ^^

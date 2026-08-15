@@ -1,0 +1,5 @@
+error: interactive elements require a stable `id`; inside v-for use `:key={...}`
+ --> tests/ui/fail_drag_surface_missing_id.rs:7:10
+  |
+7 |         <div @drop={drop_handler} />
+  |          ^^^
